@@ -6,12 +6,12 @@ package javax.microedition.shell;
 
 import android.app.Activity;
 import android.app.Application;
+import android.app.Dialog;
 import android.content.Intent;
 import android.os.Handler;
 import android.os.Looper;
 import android.view.KeyEvent;
 import android.view.View;
-import android.view.ViewGroup;
 
 import java.io.File;
 import java.util.LinkedHashMap;
@@ -22,7 +22,6 @@ import javax.microedition.lcdui.Alert;
 import javax.microedition.lcdui.Canvas;
 import javax.microedition.lcdui.Displayable;
 import javax.microedition.lcdui.keyboard.KeyMapper;
-import javax.microedition.lcdui.overlay.OverlayView;
 import javax.microedition.util.ContextHolder;
 
 /** A single embedded MIDlet session owned by an ordinary Android Activity. */
@@ -50,6 +49,18 @@ public final class J2meSession implements J2meHost, AutoCloseable {
 		default void onOptionsMenuRequested() {
 		}
 
+		/** Gives a view-backed LCDUI screen to the host without attaching it to a container. */
+		default void onShowView(String className, String title, View view) {
+		}
+
+		/** Tells the host to detach a previously supplied LCDUI view. */
+		default void onHideView(View view) {
+		}
+
+		/** Gives a prepared MIDP alert dialog to the host; the host decides when to show it. */
+		default void onShowDialog(Dialog dialog) {
+		}
+
 		default void onExitRequested(J2meSession session) {
 			session.stop();
 		}
@@ -59,8 +70,6 @@ public final class J2meSession implements J2meHost, AutoCloseable {
 	}
 
 	private final Activity activity;
-	private final ViewGroup displayableContainer;
-	private final OverlayView overlayView;
 	private final Callbacks callbacks;
 	private final Handler mainHandler = new Handler(Looper.getMainLooper());
 	private final ExecutorService worker = Executors.newSingleThreadExecutor(r -> {
@@ -74,17 +83,15 @@ public final class J2meSession implements J2meHost, AutoCloseable {
 	private volatile boolean closed;
 	private volatile boolean finished;
 	private Displayable current;
+	private View currentView;
 	private ExternalVideoOutput videoOutput;
 	private String appName = "J2ME";
 
-	J2meSession(Activity activity, ViewGroup displayableContainer, OverlayView overlayView,
-			Callbacks callbacks) {
-		if (activity == null || displayableContainer == null || overlayView == null) {
-			throw new NullPointerException("Activity, display container and overlay view are required");
+	J2meSession(Activity activity, Callbacks callbacks) {
+		if (activity == null) {
+			throw new NullPointerException("Activity is required");
 		}
 		this.activity = activity;
-		this.displayableContainer = displayableContainer;
-		this.overlayView = overlayView;
 		this.callbacks = callbacks == null ? new Callbacks() { } : callbacks;
 	}
 
@@ -105,6 +112,10 @@ public final class J2meSession implements J2meHost, AutoCloseable {
 		if (midletJar == null || conversionDirectory == null || config == null) {
 			throw new NullPointerException(
 					"MIDlet JAR, conversion directory, and configuration are required");
+		}
+		if (videoOutput == null) {
+			throw new IllegalStateException(
+					"ExternalVideoOutput must be set before starting an embedded session");
 		}
 
 		Application application = activity.getApplication();
@@ -268,24 +279,28 @@ public final class J2meSession implements J2meHost, AutoCloseable {
 		Displayable previous = current;
 		current = displayable;
 		mainHandler.post(() -> {
+			View previousView = currentView;
+			currentView = null;
 			if (previous != null) {
 				if (previous instanceof Canvas && videoOutput != null) {
 					((Canvas) previous).hideExternal();
 				}
+				if (previousView != null) {
+					callbacks.onHideView(previousView);
+				}
 				previous.clearDisplayableView();
 			}
-			displayableContainer.removeAllViews();
+			String title = displayable == null || displayable.getTitle() == null
+					? appName : displayable.getTitle();
 			if (displayable instanceof Canvas && videoOutput != null) {
 				Canvas canvas = (Canvas) displayable;
 				canvas.showExternal();
 				videoOutput.onVideoSizeChanged(canvas.getWidth(), canvas.getHeight());
 			} else if (displayable != null && !(displayable instanceof Alert)) {
 				View view = displayable.getDisplayableView();
-				displayableContainer.addView(view, new ViewGroup.LayoutParams(
-						ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+				currentView = view;
+				callbacks.onShowView(displayable.getClass().getName(), title, view);
 			}
-			String title = displayable == null || displayable.getTitle() == null
-					? appName : displayable.getTitle();
 			activity.setTitle(title);
 			callbacks.onTitleChanged(title);
 		});
@@ -311,14 +326,17 @@ public final class J2meSession implements J2meHost, AutoCloseable {
 			visible = false;
 			Displayable old = current;
 			current = null;
+			View oldView = currentView;
+			currentView = null;
+			if (oldView != null) {
+				callbacks.onHideView(oldView);
+			}
 			if (old != null) {
 				if (old instanceof Canvas && videoOutput != null) {
 					((Canvas) old).hideExternal();
 				}
 				old.clearDisplayableView();
 			}
-			displayableContainer.removeAllViews();
-			overlayView.setVisibility(false);
 			ContextHolder.detachHost(this);
 			setState(State.STOPPED);
 			callbacks.onSessionFinished();
@@ -337,13 +355,17 @@ public final class J2meSession implements J2meHost, AutoCloseable {
 	}
 
 	@Override
-	public OverlayView getOverlayView() {
-		return overlayView;
+	public String getAppName() {
+		return appName;
 	}
 
 	@Override
-	public String getAppName() {
-		return appName;
+	public boolean requestAlert(Alert alert) {
+		if (alert == null) {
+			return false;
+		}
+		mainHandler.post(() -> callbacks.onShowDialog(alert.prepareDialog()));
+		return true;
 	}
 
 	@Override

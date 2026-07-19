@@ -7,9 +7,7 @@ package javax.microedition.shell;
 import android.annotation.SuppressLint;
 import android.app.Activity;
 import android.app.Application;
-import android.view.ViewGroup;
 
-import javax.microedition.lcdui.overlay.OverlayView;
 import javax.microedition.util.ContextHolder;
 
 /** Entry point for embedding J2ME Loader in an ordinary Activity. */
@@ -20,7 +18,7 @@ public final class J2meRuntime {
 	private J2meRuntime() {
 	}
 
-	/** Must be called before constructing J2ME-owned views such as {@link OverlayView}. */
+	/** Must be called before creating an embedded J2ME session. */
 	public static void initialize(Application application) {
 		if (application == null) {
 			throw new NullPointerException("Application is required");
@@ -29,12 +27,11 @@ public final class J2meRuntime {
 	}
 
 	public static synchronized J2meSession createSession(Activity activity,
-			ViewGroup displayableContainer, OverlayView overlayView,
 			J2meSession.Callbacks callbacks) {
 		if (activeSession != null && !activeSession.isClosed()) {
 			throw new IllegalStateException("Only one J2ME session may be active in a process");
 		}
-		activeSession = new J2meSession(activity, displayableContainer, overlayView, callbacks);
+		activeSession = new J2meSession(activity, callbacks);
 		return activeSession;
 	}
 

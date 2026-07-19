@@ -1231,12 +1231,14 @@ public abstract class Canvas extends Displayable {
 			surface = holder.getSurface();
 			Display.postEvent(CanvasEvent.getInstance(Canvas.this, CanvasEvent.SHOW_NOTIFY));
 			repaintInternal();
-			if (showFps) {
+			if (showFps && overlayView != null) {
 				fpsCounter = new FpsCounter(overlayView);
 				overlayView.addLayer(fpsCounter);
 			}
-			overlayView.addLayer(softBar, 0);
-			overlayView.setVisibility(true);
+			if (overlayView != null) {
+				overlayView.addLayer(softBar, 0);
+				overlayView.setVisibility(true);
+			}
 			overlay = ContextHolder.getVk();
 			if (overlay != null) {
 				overlay.setTarget(Canvas.this);
@@ -1257,9 +1259,11 @@ public abstract class Canvas extends Displayable {
 				overlayView.removeLayer(fpsCounter);
 				fpsCounter = null;
 			}
-			overlayView.removeLayer(softBar);
+			if (overlayView != null) {
+				overlayView.removeLayer(softBar);
+				overlayView.setVisibility(false);
+			}
 			softBar.closeMenu();
-			overlayView.setVisibility(false);
 			if (overlay != null) {
 				overlay.setTarget(null);
 				overlay.cancel();
@@ -1309,7 +1313,7 @@ public abstract class Canvas extends Displayable {
 			super(Canvas.this, false);
 			Activity activity = ContextHolder.getActivity();
 			J2meHost host = ContextHolder.getHost();
-			this.overlayView = host.getOverlayView();
+			this.overlayView = host == null ? null : host.getOverlayView();
 			DisplayMetrics metrics = activity.getResources().getDisplayMetrics();
 			padding = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, 5, metrics);
 			textColor = ContextCompat.getColor(activity, R.color.accent);
@@ -1318,6 +1322,13 @@ public abstract class Canvas extends Displayable {
 		}
 
 		private void showPopup() {
+			if (overlayView == null) {
+				J2meHost host = ContextHolder.getHost();
+				if (host != null) {
+					host.openOptionsMenu();
+				}
+				return;
+			}
 			PopupWindow popup = prepareMenu(fullscreen ? 0 : 1);
 			popup.setWidth(Math.min(displayWidth, displayHeight) / 2);
 			popup.setHeight(ViewGroup.LayoutParams.WRAP_CONTENT);
@@ -1343,11 +1354,13 @@ public abstract class Canvas extends Displayable {
 						rightLabel = commands.get(0).getAndroidLabel();
 						break;
 					default:
-						leftLabel = overlayView.getResources().getString(R.string.cmd_menu);
+						leftLabel = ContextHolder.getActivity().getString(R.string.cmd_menu);
 						rightLabel = commands.get(0).getAndroidLabel();
 				}
 			}
-			overlayView.postInvalidate();
+			if (overlayView != null) {
+				overlayView.postInvalidate();
+			}
 		}
 
 		private boolean fireLeftSoft() {

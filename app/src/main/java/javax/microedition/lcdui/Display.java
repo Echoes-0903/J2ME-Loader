@@ -24,6 +24,7 @@ import javax.microedition.lcdui.event.Event;
 import javax.microedition.lcdui.event.EventQueue;
 import javax.microedition.lcdui.event.RunnableEvent;
 import javax.microedition.midlet.MIDlet;
+import javax.microedition.shell.J2meHost;
 import javax.microedition.util.ContextHolder;
 
 import ru.woesss.j2me.jar.Descriptor;
@@ -132,6 +133,13 @@ public class Display {
 	}
 
 	private void showAlert(Alert alert) {
+		J2meHost host = ContextHolder.getHost();
+		if (host != null && host.requestAlert(alert)) {
+			if (alert.finiteTimeout()) {
+				ViewHandler.postDelayed(alert::dismiss, alert.getTimeout());
+			}
+			return;
+		}
 		ViewHandler.postEvent(() -> {
 			AlertDialog alertDialog = alert.prepareDialog();
 			alertDialog.show();

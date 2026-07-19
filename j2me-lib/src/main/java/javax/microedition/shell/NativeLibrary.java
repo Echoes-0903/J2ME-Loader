@@ -7,12 +7,9 @@ package javax.microedition.shell;
 import android.app.Activity;
 import android.app.Application;
 import android.view.KeyEvent;
-import android.view.ViewGroup;
 
 import java.io.File;
 import java.util.Map;
-
-import javax.microedition.lcdui.overlay.OverlayView;
 
 /**
  * Small facade intended for app hosts. It keeps the public embedding surface in one class while
@@ -26,9 +23,8 @@ public final class NativeLibrary implements AutoCloseable {
 		J2meRuntime.initialize(application);
 	}
 
-	public NativeLibrary(Activity activity, ViewGroup displayableContainer,
-			OverlayView overlayView, J2meSession.Callbacks callbacks) {
-		session = J2meRuntime.createSession(activity, displayableContainer, overlayView, callbacks);
+	public NativeLibrary(Activity activity, J2meSession.Callbacks callbacks) {
+		session = J2meRuntime.createSession(activity, callbacks);
 	}
 
 	public NativeLibrary setExternalOutput(ExternalVideoOutput output) {

@@ -6,6 +6,7 @@ package javax.microedition.shell;
 
 import android.app.Activity;
 
+import javax.microedition.lcdui.Alert;
 import javax.microedition.lcdui.Displayable;
 import javax.microedition.lcdui.overlay.OverlayView;
 
@@ -25,7 +26,15 @@ public interface J2meHost {
 
 	void openOptionsMenu();
 
-	OverlayView getOverlayView();
+	/** Standalone UI hosts may expose an overlay. Pure external-output hosts return null. */
+	default OverlayView getOverlayView() {
+		return null;
+	}
+
+	/** Lets embedded hosts receive an Alert dialog instead of having the runtime show it directly. */
+	default boolean requestAlert(Alert alert) {
+		return false;
+	}
 
 	String getAppName();
 
