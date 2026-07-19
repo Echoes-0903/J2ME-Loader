@@ -71,6 +71,37 @@ jobs:
             :j2me-lib:assembleRelease \
             :j2me-lib:publishReleasePublicationToIntegrationRepository
 
+      - name: Verify 16 KB ELF alignment
+        shell: bash
+        run: |
+          set -euo pipefail
+          aar="j2me-lib/build/outputs/aar/j2me-lib-release.aar"
+          extract_dir="${RUNNER_TEMP}/j2me-aar"
+          readelf="${ANDROID_SDK_ROOT}/ndk/${J2ME_NDK_VERSION}/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf"
+          rm -rf "${extract_dir}"
+          mkdir -p "${extract_dir}"
+          unzip -q "${aar}" 'jni/*.so' -d "${extract_dir}"
+          mapfile -d '' libraries < <(find "${extract_dir}/jni" -name '*.so' -print0)
+          if (( ${#libraries[@]} == 0 )); then
+            echo "No shared libraries found in ${aar}" >&2
+            exit 1
+          fi
+
+          failed=0
+          for library in "${libraries[@]}"; do
+            echo "Checking ${library#${extract_dir}/}"
+            while read -r alignment; do
+              echo "  LOAD alignment ${alignment}"
+              if (( alignment < 0x4000 )); then
+                failed=1
+              fi
+            done < <("${readelf}" -lW "${library}" | awk '$1 == "LOAD" { print $NF }')
+          done
+          if (( failed != 0 )); then
+            echo "One or more ELF LOAD segments are not aligned for 16 KB pages." >&2
+            exit 1
+          fi
+
       - name: Upload workflow artifacts
         uses: actions/upload-artifact@v4
         with:
