@@ -20,7 +20,7 @@ maven {
 Then add the fixed release dependency:
 
 ```groovy
-implementation 'ru.playsoftware.j2meloader:j2me-loader:1.8.2-external-output.1'
+implementation 'ru.playsoftware.j2meloader:j2me-loader:1.8.2-external-output.2'
 ```
 
 Tags named `j2me-lib-v<version>` build the release AAR, update the `maven`

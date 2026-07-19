@@ -66,6 +66,17 @@ public final class NativeLibrary implements AutoCloseable {
 		session.start(midletJar, conversionDirectory, config);
 	}
 
+	/** Starts a game from host-provided absolute JAR and conversion directory paths. */
+	public void startGame(String midletJarPath, String conversionDirectoryPath) {
+		if (midletJarPath == null || midletJarPath.trim().isEmpty()) {
+			throw new IllegalArgumentException("MIDlet JAR path is required");
+		}
+		if (conversionDirectoryPath == null || conversionDirectoryPath.trim().isEmpty()) {
+			throw new IllegalArgumentException("Conversion directory path is required");
+		}
+		startGame(new File(midletJarPath), new File(conversionDirectoryPath));
+	}
+
 	public void pause() {
 		session.pause();
 	}
