@@ -16,4 +16,7 @@ dependencyResolutionManagement {
     }
 }
 rootProject.name = "J2ME Loader"
-include ':app', ':dexlib'
+include ':dexlib', ':j2me-lib'
+if (!gradle.startParameter.projectProperties.containsKey('j2meEmbeddingBuild')) {
+    include ':app'
+}

@@ -25,7 +25,6 @@ import android.os.Environment;
 
 import java.io.File;
 
-import javax.microedition.shell.MicroActivity;
 import javax.microedition.util.ContextHolder;
 
 import androidx.preference.PreferenceManager;
@@ -129,14 +128,14 @@ public class Config {
 		String workDir = appDir.getParentFile().getParent();
 		File file = new File(workDir + Config.MIDLET_CONFIGS_DIR + appDir.getName());
 		if (showSettings || !file.exists()) {
-			Intent intent = new Intent(ACTION_EDIT, Uri.parse(path),
-					context, ConfigActivity.class);
+			Intent intent = new Intent(ACTION_EDIT, Uri.parse(path));
+			intent.setClassName(context, "ru.playsoftware.j2meloader.config.ConfigActivity");
 			intent.putExtra(KEY_MIDLET_NAME, name);
 			intent.putExtra(KEY_START_ARGUMENTS, arguments);
 			context.startActivity(intent);
 		} else {
-			Intent intent = new Intent(Intent.ACTION_DEFAULT, Uri.parse(path),
-					context, MicroActivity.class);
+			Intent intent = new Intent(Intent.ACTION_DEFAULT, Uri.parse(path));
+			intent.setClassName(context, "javax.microedition.shell.MicroActivity");
 			intent.putExtra(KEY_MIDLET_NAME, name);
 			intent.putExtra(KEY_START_ARGUMENTS, arguments);
 			context.startActivity(intent);

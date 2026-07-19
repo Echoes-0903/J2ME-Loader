@@ -35,9 +35,6 @@ import javax.microedition.lcdui.Display;
 import javax.microedition.shell.MidletThread;
 import javax.microedition.util.ContextHolder;
 
-import ru.playsoftware.j2meloader.applist.AppItem;
-import ru.playsoftware.j2meloader.util.AppUtils;
-
 public abstract class MIDlet {
 	private static final String TAG = MIDlet.class.getName();
 	private static Map<String, String> properties;
@@ -184,11 +181,10 @@ public abstract class MIDlet {
 		argumentsBuilder.deleteCharAt(argumentsBuilder.length() - 1);
 		final String arguments = argumentsBuilder.toString();
 		try {
-			final AppItem item = AppUtils.findApp(name, vendor, uid);
-			if (item == null) {
+			if (ContextHolder.getHost() == null || !ContextHolder.getHost()
+					.requestMidletStart(name, vendor, uid, arguments)) {
 				throw new ConnectionNotFoundException("App (" + name + ", " + vendor + ", " + uid + ") was not found!");
 			}
-			MidletThread.startAfterDestroy = new String[] { item.getTitle(), item.getPathExt(), arguments };
 		} catch (Exception e) {
 			e.printStackTrace();
 			throw new ConnectionNotFoundException(e);

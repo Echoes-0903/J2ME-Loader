@@ -69,21 +69,30 @@ public class MidletThread extends HandlerThread implements Handler.Callback {
 
 	public static void notifyDestroyed() {
 		Thread.setDefaultUncaughtExceptionHandler(uncaughtExceptionHandler);
-		if (instance != null) {
-			instance.state = DESTROYED;
+		MidletThread thread = instance;
+		instance = null;
+		if (thread != null) {
+			thread.state = DESTROYED;
+			thread.quitSafely();
 		}
-		MicroActivity activity = ContextHolder.getActivity();
-		if (activity != null) {
-			activity.finish();
+		J2meHost host = ContextHolder.getHost();
+		if (host != null) {
+			host.finishSession();
 		}
-		if (startAfterDestroy != null) {
-			Config.startApp(ContextHolder.getActivity(), startAfterDestroy[0], startAfterDestroy[1], false, startAfterDestroy[2]);
+		String[] next = startAfterDestroy;
+		startAfterDestroy = null;
+		if (next != null && host != null) {
+			Config.startApp(host.getActivity(), next[0], next[1], false, next[2]);
 		}
-		Process.killProcess(Process.myPid());
+		if (host == null || host.terminateProcessOnExit()) {
+			Process.killProcess(Process.myPid());
+		}
 	}
 
 	public static void notifyPaused() {
-		instance.state = PAUSED;
+		if (instance != null) {
+			instance.state = PAUSED;
+		}
 	}
 
 	static void pauseApp() {
@@ -92,24 +101,26 @@ public class MidletThread extends HandlerThread implements Handler.Callback {
 	}
 
 	public static void resumeApp() {
-		MicroActivity activity = ContextHolder.getActivity();
-		if (instance != null && activity != null && activity.isVisible())
+		J2meHost host = ContextHolder.getHost();
+		if (instance != null && host != null && host.isVisible())
 			instance.handler.obtainMessage(START).sendToTarget();
 	}
 
 	static void destroyApp() {
 		Thread.setDefaultUncaughtExceptionHandler(uncaughtExceptionHandler);
-		new Thread(() -> {
-			try {
-				Thread.sleep(1000);
-			} catch (InterruptedException e) {
-				e.printStackTrace();
-			}
-			Process.killProcess(Process.myPid());
-		}, "ForceDestroyTimer").start();
-		MicroActivity activity = ContextHolder.getActivity();
-		if (activity != null) {
-			Displayable current = activity.getCurrent();
+		J2meHost host = ContextHolder.getHost();
+		if (host == null || host.terminateProcessOnExit()) {
+			new Thread(() -> {
+				try {
+					Thread.sleep(1000);
+				} catch (InterruptedException e) {
+					Thread.currentThread().interrupt();
+				}
+				Process.killProcess(Process.myPid());
+			}, "ForceDestroyTimer").start();
+		}
+		if (host != null) {
+			Displayable current = host.getCurrent();
 			if (current instanceof Canvas) {
 				Canvas canvas = (Canvas) current;
 				canvas.postKeyPressed(Canvas.KEY_END);
@@ -118,6 +129,8 @@ public class MidletThread extends HandlerThread implements Handler.Callback {
 		}
 		if (instance != null) {
 			instance.handler.obtainMessage(DESTROY).sendToTarget();
+		} else if (host != null) {
+			host.finishSession();
 		}
 	}
 

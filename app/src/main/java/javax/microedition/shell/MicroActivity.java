@@ -22,6 +22,7 @@ package javax.microedition.shell;
 import static ru.playsoftware.j2meloader.util.Constants.*;
 
 import android.annotation.SuppressLint;
+import android.app.Activity;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.pm.ActivityInfo;
@@ -75,6 +76,7 @@ import javax.microedition.lcdui.List;
 import javax.microedition.lcdui.ViewHandler;
 import javax.microedition.lcdui.event.SimpleEvent;
 import javax.microedition.lcdui.keyboard.VirtualKeyboard;
+import javax.microedition.lcdui.overlay.OverlayView;
 import javax.microedition.location.LocationProviderImpl;
 import javax.microedition.util.ContextHolder;
 
@@ -82,12 +84,14 @@ import io.reactivex.SingleObserver;
 import io.reactivex.disposables.Disposable;
 import ru.playsoftware.j2meloader.BuildConfig;
 import ru.playsoftware.j2meloader.R;
+import ru.playsoftware.j2meloader.applist.AppItem;
 import ru.playsoftware.j2meloader.config.Config;
 import ru.playsoftware.j2meloader.databinding.ActivityMicroBinding;
+import ru.playsoftware.j2meloader.util.AppUtils;
 import ru.playsoftware.j2meloader.util.Constants;
 import ru.playsoftware.j2meloader.util.LogUtils;
 
-public class MicroActivity extends AppCompatActivity {
+public class MicroActivity extends AppCompatActivity implements J2meHost {
 	private static final int ORIENTATION_DEFAULT = 0;
 	private static final int ORIENTATION_AUTO = 1;
 	private static final int ORIENTATION_PORTRAIT = 2;
@@ -109,7 +113,7 @@ public class MicroActivity extends AppCompatActivity {
 	public void onCreate(Bundle savedInstanceState) {
 		lockNightMode();
 		super.onCreate(savedInstanceState);
-		ContextHolder.setCurrentActivity(this);
+		ContextHolder.setCurrentActivity(this, this);
 
 		binding = ActivityMicroBinding.inflate(getLayoutInflater());
 		View view = binding.getRoot();
@@ -651,6 +655,47 @@ public class MicroActivity extends AppCompatActivity {
 		return appName;
 	}
 
+	@Override
+	public String getCrashReportData() {
+		return ACRA.getErrorReporter().getCustomData(Constants.KEY_APPCENTER_ATTACHMENT);
+	}
+
+	@Override
+	public void setCrashReportData(String data) {
+		ACRA.getErrorReporter().putCustomData(Constants.KEY_APPCENTER_ATTACHMENT, data);
+	}
+
+	@Override
+	public Activity getActivity() {
+		return this;
+	}
+
+	@Override
+	public void finishSession() {
+		finish();
+	}
+
+	@Override
+	public OverlayView getOverlayView() {
+		return binding == null ? null : binding.overlayView;
+	}
+
+	@Override
+	public boolean terminateProcessOnExit() {
+		return true;
+	}
+
+	@Override
+	public boolean requestMidletStart(String name, String vendor, String uid, String arguments)
+			throws Exception {
+		AppItem item = AppUtils.findApp(name, vendor, uid);
+		if (item == null) {
+			return false;
+		}
+		MidletThread.startAfterDestroy = new String[]{item.getTitle(), item.getPathExt(), arguments};
+		return true;
+	}
+
 	private class SetCurrentEvent extends SimpleEvent {
 		private final Displayable current;
 		private final Displayable next;
@@ -702,6 +747,7 @@ public class MicroActivity extends AppCompatActivity {
 
 	@Override
 	protected void onDestroy() {
+		ContextHolder.detachHost(this);
 		binding = null;
 		super.onDestroy();
 	}

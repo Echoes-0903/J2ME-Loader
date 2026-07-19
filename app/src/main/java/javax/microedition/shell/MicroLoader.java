@@ -30,9 +30,6 @@ import android.view.KeyEvent;
 
 import androidx.core.content.ContextCompat;
 
-import org.acra.ACRA;
-import org.acra.ErrorReporter;
-
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
@@ -70,7 +67,6 @@ import ru.playsoftware.j2meloader.config.Config;
 import ru.playsoftware.j2meloader.config.ProfileModel;
 import ru.playsoftware.j2meloader.config.ProfilesManager;
 import ru.playsoftware.j2meloader.config.ShaderInfo;
-import ru.playsoftware.j2meloader.util.Constants;
 import ru.playsoftware.j2meloader.util.FileUtils;
 import ru.playsoftware.j2meloader.util.IOUtils;
 import ru.woesss.j2me.jar.Descriptor;
@@ -95,8 +91,10 @@ public class MicroLoader {
 	}
 
 	public boolean init() {
-		File config = new File(workDir + Config.MIDLET_CONFIGS_DIR + appDirName);
-		this.params = ProfilesManager.loadConfig(config);
+		if (params == null) {
+			File config = new File(workDir + Config.MIDLET_CONFIGS_DIR + appDirName);
+			this.params = ProfilesManager.loadConfig(config);
+		}
 		if (params == null) {
 			return false;
 		}
@@ -123,6 +121,10 @@ public class MicroLoader {
 		return true;
 	}
 
+	void setConfiguration(ProfileModel configuration) {
+		params = configuration;
+	}
+
 	LinkedHashMap<String, String> loadMIDletList() throws IOException {
 		LinkedHashMap<String, String> midlets = new LinkedHashMap<>();
 		String jarHash = null;
@@ -146,8 +148,8 @@ public class MicroLoader {
 			}
 		}
 		Map<String, String> attr = descriptor.getAttrs();
-		ErrorReporter errorReporter = ACRA.getErrorReporter();
-		String report = errorReporter.getCustomData(Constants.KEY_APPCENTER_ATTACHMENT);
+		J2meHost host = ContextHolder.getHost();
+		String report = host == null ? null : host.getCrashReportData();
 		StringBuilder sb = new StringBuilder();
 		if (report != null) {
 			sb.append(report).append("\n");
@@ -158,7 +160,9 @@ public class MicroLoader {
 		if (jarHash != null) {
 			sb.append("JAR_HASH_MD5").append(": ").append(jarHash);
 		}
-		errorReporter.putCustomData(Constants.KEY_APPCENTER_ATTACHMENT, sb.toString());
+		if (host != null) {
+			host.setCrashReportData(sb.toString());
+		}
 		MIDlet.initProps(attr);
 		for (int i = 1; ; i++) {
 			String v = attr.get("MIDlet-" + i);

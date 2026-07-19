@@ -142,7 +142,7 @@ public class Display {
 	}
 
 	private void showCurrent() {
-		ContextHolder.getActivity().setCurrent(current);
+		ContextHolder.getHost().setCurrent(current);
 	}
 
 	public Displayable getCurrent() {

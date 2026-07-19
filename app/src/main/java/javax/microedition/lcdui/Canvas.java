@@ -22,6 +22,7 @@ package javax.microedition.lcdui;
 import static android.opengl.GLES20.*;
 
 import android.annotation.SuppressLint;
+import android.app.Activity;
 import android.graphics.Bitmap;
 import android.graphics.Matrix;
 import android.graphics.Paint;
@@ -72,7 +73,8 @@ import javax.microedition.lcdui.overlay.FpsCounter;
 import javax.microedition.lcdui.overlay.Layer;
 import javax.microedition.lcdui.overlay.Overlay;
 import javax.microedition.lcdui.overlay.OverlayView;
-import javax.microedition.shell.MicroActivity;
+import javax.microedition.shell.ExternalVideoOutput;
+import javax.microedition.shell.J2meHost;
 import javax.microedition.util.ContextHolder;
 
 import io.reactivex.Single;
@@ -285,6 +287,33 @@ public abstract class Canvas extends Displayable {
 		Display.postEvent(CanvasEvent.getInstance(this,
 				CanvasEvent.KEY_REPEATED,
 				KeyMapper.convertKeyCode(keyCode)));
+	}
+
+	public void postPointerPressed(int pointer, int x, int y) {
+		Display.postEvent(CanvasEvent.getInstance(this, CanvasEvent.POINTER_PRESSED, pointer, x, y));
+	}
+
+	public void postPointerDragged(int pointer, int x, int y) {
+		Display.postEvent(CanvasEvent.getInstance(this, CanvasEvent.POINTER_DRAGGED, pointer, x, y));
+	}
+
+	public void postPointerReleased(int pointer, int x, int y) {
+		Display.postEvent(CanvasEvent.getInstance(this, CanvasEvent.POINTER_RELEASED, pointer, x, y));
+	}
+
+	/** Activates a Canvas rendered through {@link ExternalVideoOutput}. */
+	public void showExternal() {
+		if (!sizeChangedCalled) {
+			Display.postEvent(CanvasEvent.getInstance(this, CanvasEvent.SIZE_CHANGED, width, height));
+			sizeChangedCalled = true;
+		}
+		Display.postEvent(CanvasEvent.getInstance(this, CanvasEvent.SHOW_NOTIFY));
+		repaintInternal();
+	}
+
+	/** Deactivates a Canvas rendered through {@link ExternalVideoOutput}. */
+	public void hideExternal() {
+		Display.postEvent(CanvasEvent.getInstance(this, CanvasEvent.HIDE_NOTIFY));
 	}
 
 	public void doShowNotify() {
@@ -526,7 +555,7 @@ public abstract class Canvas extends Displayable {
 	public View getDisplayableView() {
 		if (layout == null) {
 			layout = (LinearLayout) super.getDisplayableView();
-			MicroActivity activity = ContextHolder.getActivity();
+			Activity activity = ContextHolder.getActivity();
 			if (graphicsMode == 1) {
 				GlesView glesView = new GlesView(activity);
 				glesView.setRenderer(renderer);
@@ -927,7 +956,8 @@ public abstract class Canvas extends Displayable {
 			synchronized (bufferLock) {
 				offscreen.copyTo(offscreenCopy);
 			}
-			if (surface == null || !surface.isValid()) {
+			if (ContextHolder.getExternalVideoOutput() == null
+					&& (surface == null || !surface.isValid())) {
 				return;
 			}
 			requestFlushToScreen();
@@ -994,7 +1024,8 @@ public abstract class Canvas extends Displayable {
 
 		public ViewCallbacks(View view) {
 			mView = view;
-			overlayView = ContextHolder.getActivity().binding.overlayView;
+			J2meHost host = ContextHolder.getHost();
+			overlayView = host == null ? null : host.getOverlayView();
 		}
 
 		@Override
@@ -1239,6 +1270,15 @@ public abstract class Canvas extends Displayable {
 	}
 
 	private void requestFlushToScreen() {
+		ExternalVideoOutput externalOutput = ContextHolder.getExternalVideoOutput();
+		if (externalOutput != null) {
+			synchronized (bufferLock) {
+				if (offscreenCopy != null) {
+					externalOutput.onFrame(offscreenCopy.getBitmap());
+				}
+			}
+			return;
+		}
 		if (graphicsMode == 1) {
 			if (innerView != null) {
 				renderer.requestRender();
@@ -1267,8 +1307,9 @@ public abstract class Canvas extends Displayable {
 
 		private SoftBar() {
 			super(Canvas.this, false);
-			MicroActivity activity = ContextHolder.getActivity();
-			this.overlayView = activity.binding.overlayView;
+			Activity activity = ContextHolder.getActivity();
+			J2meHost host = ContextHolder.getHost();
+			this.overlayView = host.getOverlayView();
 			DisplayMetrics metrics = activity.getResources().getDisplayMetrics();
 			padding = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, 5, metrics);
 			textColor = ContextCompat.getColor(activity, R.color.accent);

@@ -1,0 +1,179 @@
+plugins {
+    id 'com.android.library'
+    id 'maven-publish'
+}
+
+def j2mePublishedVersion = providers.gradleProperty('j2meVersion')
+        .getOrElse('1.8.2-external-output-SNAPSHOT')
+
+android {
+    namespace 'ru.playsoftware.j2meloader'
+    compileSdk COMPILE_SDK
+    ndkVersion = project.findProperty('j2meNdkVersion')?.toString() ?: NDK_VERSION
+
+    defaultConfig {
+        // The embedding AAR targets modern hosts; NDK r27 no longer supports android-14.
+        minSdk 21
+        targetSdk TARGET_SDK
+        buildConfigField 'boolean', 'FULL_EMULATOR', 'true'
+        resValue 'string', 'app_name', 'J2ME Runtime'
+        consumerProguardFiles 'consumer-rules.pro'
+        ndk {
+            abiFilters 'arm64-v8a'
+        }
+    }
+
+    buildTypes {
+        debug {
+            jniDebuggable true
+        }
+        release {
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'),
+                    '../app/proguard-common.pro'
+        }
+    }
+
+    sourceSets {
+        main {
+            java.srcDirs = ['src/main/java', '../app/src/main/java', '../dexlib/src/main/java']
+            java.include 'javax/**'
+            java.include 'com/**'
+            java.include 'org/**'
+            java.include 'ru/woesss/j2me/jar/**'
+            java.include 'ru/playsoftware/j2meloader/config/Config.java'
+            java.include 'ru/playsoftware/j2meloader/config/Profile.java'
+            java.include 'ru/playsoftware/j2meloader/config/ProfileModel.java'
+            java.include 'ru/playsoftware/j2meloader/config/ProfilesManager.java'
+            java.include 'ru/playsoftware/j2meloader/config/ShaderInfo.java'
+            java.include 'ru/playsoftware/j2meloader/util/Constants.java'
+            java.include 'ru/playsoftware/j2meloader/util/ConverterException.java'
+            java.include 'ru/playsoftware/j2meloader/util/FastXmlSerializer.java'
+            java.include 'ru/playsoftware/j2meloader/util/FileUtils.java'
+            java.include 'ru/playsoftware/j2meloader/util/IOUtils.java'
+            java.include 'ru/playsoftware/j2meloader/util/LogUtils.java'
+            java.include 'ru/playsoftware/j2meloader/util/PickFileResultContract.java'
+            java.include 'ru/playsoftware/j2meloader/util/PNGUtils.java'
+            java.include 'ru/playsoftware/j2meloader/util/SAFFileResultContract.java'
+            java.include 'ru/playsoftware/j2meloader/util/SparseIntArrayAdapter.java'
+            java.include 'ru/playsoftware/j2meloader/util/XmlUtils.java'
+            java.include 'ru/playsoftware/j2meloader/filepicker/FilteredFilePickerActivity.java'
+            java.exclude 'javax/microedition/shell/MicroActivity.java'
+            java.exclude 'ru/playsoftware/j2meloader/applist/**'
+            java.exclude 'ru/playsoftware/j2meloader/appsdb/**'
+            java.exclude 'ru/playsoftware/j2meloader/base/**'
+            java.exclude 'ru/playsoftware/j2meloader/crashes/**'
+            java.exclude 'ru/playsoftware/j2meloader/info/**'
+            java.exclude 'ru/playsoftware/j2meloader/settings/**'
+            java.exclude 'ru/playsoftware/j2meloader/storage/**'
+            java.exclude 'ru/playsoftware/j2meloader/EmulatorApplication.java'
+            java.exclude 'ru/playsoftware/j2meloader/MainActivity.java'
+            java.exclude 'ru/playsoftware/j2meloader/config/ConfigActivity.java'
+            java.exclude 'ru/playsoftware/j2meloader/config/EditNameDialog.java'
+            java.exclude 'ru/playsoftware/j2meloader/config/LoadProfileDialog.java'
+            java.exclude 'ru/playsoftware/j2meloader/config/ProfilesActivity.java'
+            java.exclude 'ru/playsoftware/j2meloader/config/ProfilesAdapter.java'
+            java.exclude 'ru/playsoftware/j2meloader/config/SaveProfileDialog.java'
+            java.exclude 'ru/playsoftware/j2meloader/config/ShaderTuneDialog.java'
+            java.exclude 'ru/playsoftware/j2meloader/util/AppUtils.java'
+            java.exclude 'ru/playsoftware/j2meloader/util/MigrationUtils.java'
+            java.exclude 'ru/playsoftware/j2meloader/util/PickDirResultContract.java'
+            java.exclude 'ru/playsoftware/j2meloader/util/ZipUtils.java'
+            java.exclude 'ru/woesss/j2me/installer/**'
+            res.srcDirs = ['../app/src/main/res']
+            assets.srcDirs = ['../app/src/main/assets']
+        }
+    }
+
+    externalNativeBuild {
+        ndkBuild {
+            path '../app/src/main/cpp/Android.mk'
+        }
+    }
+
+    buildFeatures {
+        buildConfig true
+        viewBinding true
+    }
+
+    publishing {
+        singleVariant('debug') {
+            withSourcesJar()
+        }
+        singleVariant('release') {
+            withSourcesJar()
+        }
+    }
+}
+
+dependencies {
+    def cameraxVersion = '1.3.0-beta01'
+
+    api 'androidx.appcompat:appcompat:1.6.1'
+    api 'com.google.android.material:material:1.9.0'
+    api 'androidx.preference:preference:1.2.0'
+
+    api 'com.google.code.gson:gson:2.9.0'
+    api 'com.google.guava:guava:31.0.1-android'
+
+    api 'io.reactivex.rxjava2:rxandroid:2.1.1'
+    api 'net.lingala.zip4j:zip4j:2.10.0'
+    api 'org.ow2.asm:asm:9.8'
+
+    api 'com.github.billthefarmer:mididriver:v1.21'
+    api('com.github.nikita36078:pngj:2.2.3') {
+        transitive = false
+    }
+    api 'com.github.nikita36078:mobile-ffmpeg:v4.3.2-compact'
+
+    api "androidx.camera:camera-core:${cameraxVersion}"
+    api "androidx.camera:camera-camera2:${cameraxVersion}"
+    api "androidx.camera:camera-lifecycle:${cameraxVersion}"
+    api "androidx.camera:camera-view:${cameraxVersion}"
+
+    api 'com.github.nikita36078:filepicker:4.3.0'
+    implementation(platform('org.jetbrains.kotlin:kotlin-bom:1.8.0'))
+    implementation 'org.jetbrains.kotlin:kotlin-stdlib'
+}
+
+afterEvaluate {
+    publishing {
+        publications {
+            debug(MavenPublication) {
+                groupId = 'ru.playsoftware.j2meloader'
+                artifactId = 'j2me-loader'
+                version = j2mePublishedVersion
+                from components.debug
+            }
+            release(MavenPublication) {
+                groupId = 'ru.playsoftware.j2meloader'
+                artifactId = 'j2me-loader'
+                version = j2mePublishedVersion
+                from components.release
+
+                pom {
+                    name = 'J2ME Loader Embedding Library'
+                    description = 'Embeddable J2ME runtime with external video output and host-controlled input.'
+                    url = 'https://github.com/Echoes-0903/J2ME-Loader'
+                    licenses {
+                        license {
+                            name = 'Apache License 2.0'
+                            url = 'https://www.apache.org/licenses/LICENSE-2.0.txt'
+                        }
+                    }
+                    scm {
+                        connection = 'scm:git:https://github.com/Echoes-0903/J2ME-Loader.git'
+                        developerConnection = 'scm:git:ssh://git@github.com/Echoes-0903/J2ME-Loader.git'
+                        url = 'https://github.com/Echoes-0903/J2ME-Loader'
+                    }
+                }
+            }
+        }
+        repositories {
+            maven {
+                name = 'integration'
+                url = layout.buildDirectory.dir('repo')
+            }
+        }
+    }
+}

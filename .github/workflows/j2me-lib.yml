@@ -1,0 +1,133 @@
+name: J2ME embedding library
+
+on:
+  push:
+    branches:
+      - master
+      - "codex/**"
+    tags:
+      - "j2me-lib-v*"
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: j2me-lib-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref_type != 'tag' }}
+
+permissions:
+  contents: write
+
+env:
+  J2ME_NDK_VERSION: 27.1.12297006
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: gradle
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android packages
+        shell: bash
+        run: sdkmanager "platforms;android-34" "ndk;${J2ME_NDK_VERSION}"
+
+      - name: Resolve Maven version
+        id: version
+        shell: bash
+        run: |
+          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            version="${GITHUB_REF_NAME#j2me-lib-v}"
+            if [[ -z "${version}" || "${version}" == "${GITHUB_REF_NAME}" ]]; then
+              echo "Invalid release tag: ${GITHUB_REF_NAME}" >&2
+              exit 1
+            fi
+          else
+            version="1.8.2-external-output-SNAPSHOT"
+          fi
+          echo "version=${version}" >> "${GITHUB_OUTPUT}"
+
+      - name: Build release AAR and Maven repository
+        shell: bash
+        run: |
+          chmod +x ./gradlew
+          ./gradlew --no-daemon \
+            -Pj2meEmbeddingBuild \
+            -Pj2meNdkVersion="${J2ME_NDK_VERSION}" \
+            -Pj2meVersion="${{ steps.version.outputs.version }}" \
+            :j2me-lib:assembleRelease \
+            :j2me-lib:publishReleasePublicationToIntegrationRepository
+
+      - name: Upload workflow artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: j2me-loader-${{ steps.version.outputs.version }}
+          if-no-files-found: error
+          path: |
+            j2me-lib/build/outputs/aar/j2me-lib-release.aar
+            j2me-lib/build/repo/**
+
+      - name: Publish Maven repository branch
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_VERSION: ${{ steps.version.outputs.version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          repo_url="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          publish_dir="$(mktemp -d)"
+
+          if git ls-remote --exit-code --heads "${repo_url}" maven >/dev/null 2>&1; then
+            git clone --depth 1 --branch maven "${repo_url}" "${publish_dir}"
+          else
+            git -C "${publish_dir}" init
+            git -C "${publish_dir}" checkout --orphan maven
+            git -C "${publish_dir}" remote add origin "${repo_url}"
+          fi
+
+          cp -a "${GITHUB_WORKSPACE}/j2me-lib/build/repo/." "${publish_dir}/"
+          git -C "${publish_dir}" config user.name "github-actions[bot]"
+          git -C "${publish_dir}" config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git -C "${publish_dir}" add --all
+
+          if ! git -C "${publish_dir}" diff --cached --quiet; then
+            git -C "${publish_dir}" commit -m "Publish j2me-loader ${RELEASE_VERSION}"
+            git -C "${publish_dir}" push origin HEAD:maven
+          fi
+
+      - name: Publish GitHub release
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_VERSION: ${{ steps.version.outputs.version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME}"
+          aar="j2me-lib/build/outputs/aar/j2me-lib-release.aar"
+          pom="j2me-lib/build/repo/ru/playsoftware/j2meloader/j2me-loader/${RELEASE_VERSION}/j2me-loader-${RELEASE_VERSION}.pom"
+
+          if gh release view "${tag}" >/dev/null 2>&1; then
+            gh release upload "${tag}" "${aar}#j2me-loader-${RELEASE_VERSION}.aar" "${pom}" --clobber
+          else
+            gh release create "${tag}" \
+              "${aar}#j2me-loader-${RELEASE_VERSION}.aar" \
+              "${pom}" \
+              --verify-tag \
+              --title "J2ME embedding library ${RELEASE_VERSION}" \
+              --generate-notes
+          fi

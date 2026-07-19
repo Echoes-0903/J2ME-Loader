@@ -18,6 +18,7 @@ package com.nokia.mid.ui;
 
 import android.Manifest;
 import android.annotation.SuppressLint;
+import android.app.Activity;
 import android.app.Notification;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
@@ -32,7 +33,7 @@ import androidx.core.graphics.drawable.IconCompat;
 
 import java.util.Hashtable;
 
-import javax.microedition.shell.MicroActivity;
+import javax.microedition.shell.J2meHost;
 import javax.microedition.util.ContextHolder;
 
 import ru.playsoftware.j2meloader.R;
@@ -45,7 +46,7 @@ public class SoftNotificationImpl extends SoftNotification {
 	@SuppressLint("StaticFieldLeak")
 	private static NotificationManagerCompat notificationmgr;
 	@SuppressLint("StaticFieldLeak")
-	private static MicroActivity activity;
+	private static Activity activity;
 
 	private SoftNotificationListener[] listeners;
 	private String groupText;
@@ -111,7 +112,8 @@ public class SoftNotificationImpl extends SoftNotification {
 		try {
 			if (id == -1) id = ids++;
 			instanceMap.put(id, this);
-			String appName = activity.getAppName();
+			J2meHost host = ContextHolder.getHost();
+			String appName = host == null ? "MIDlet" : host.getAppName();
 			String channelId = appName.toLowerCase();
 			if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
 				NotificationChannel channel = notificationmgr.getNotificationChannel(channelId);

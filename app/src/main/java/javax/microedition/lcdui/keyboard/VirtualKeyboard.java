@@ -41,7 +41,7 @@ import java.util.Arrays;
 import javax.microedition.lcdui.Canvas;
 import javax.microedition.lcdui.graphics.CanvasWrapper;
 import javax.microedition.lcdui.overlay.Overlay;
-import javax.microedition.shell.MicroActivity;
+import javax.microedition.shell.J2meHost;
 import javax.microedition.util.ContextHolder;
 
 import ru.playsoftware.j2meloader.config.Config;
@@ -1358,9 +1358,9 @@ public class VirtualKeyboard implements Overlay, Runnable {
 			if (selected) {
 				selected = false;
 				handler.removeCallbacks(this);
-				MicroActivity activity = ContextHolder.getActivity();
-				if (activity != null) {
-					activity.openOptionsMenu();
+				J2meHost host = ContextHolder.getHost();
+				if (host != null) {
+					host.openOptionsMenu();
 				}
 			}
 		}
@@ -1368,9 +1368,9 @@ public class VirtualKeyboard implements Overlay, Runnable {
 		@Override
 		public void run() {
 			selected = false;
-			MicroActivity activity = ContextHolder.getActivity();
-			if (activity != null) {
-				activity.runOnUiThread(activity::showExitConfirmation);
+			J2meHost host = ContextHolder.getHost();
+			if (host != null) {
+				host.getActivity().runOnUiThread(host::showExitConfirmation);
 			}
 		}
 	}

@@ -33,7 +33,7 @@ import java.util.ArrayList;
 import javax.microedition.lcdui.commands.AbstractSoftKeysBar;
 import javax.microedition.lcdui.event.CommandActionEvent;
 import javax.microedition.lcdui.event.SimpleEvent;
-import javax.microedition.shell.MicroActivity;
+import javax.microedition.shell.J2meHost;
 import javax.microedition.util.ContextHolder;
 
 public abstract class Displayable {
@@ -89,9 +89,9 @@ public abstract class Displayable {
 	public void setTitle(String title) {
 		this.title = title;
 
-		MicroActivity activity = ContextHolder.getActivity();
-		if (isShown()) {
-			ViewHandler.postEvent(() -> activity.setTitle(title));
+		J2meHost host = ContextHolder.getHost();
+		if (host != null && isShown()) {
+			ViewHandler.postEvent(() -> host.getActivity().setTitle(title));
 		}
 	}
 
@@ -100,9 +100,9 @@ public abstract class Displayable {
 	}
 
 	public boolean isShown() {
-		MicroActivity activity = ContextHolder.getActivity();
-		if (activity != null) {
-			return activity.isVisible() && activity.getCurrent() == this;
+		J2meHost host = ContextHolder.getHost();
+		if (host != null) {
+			return host.isVisible() && host.getCurrent() == this;
 		}
 		return false;
 	}

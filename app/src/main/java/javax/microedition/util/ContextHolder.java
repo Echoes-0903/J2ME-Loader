@@ -18,6 +18,7 @@
 package javax.microedition.util;
 
 import android.app.Application;
+import android.app.Activity;
 import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageManager;
@@ -41,7 +42,8 @@ import java.util.Objects;
 
 import javax.microedition.lcdui.keyboard.VirtualKeyboard;
 import javax.microedition.shell.AppClassLoader;
-import javax.microedition.shell.MicroActivity;
+import javax.microedition.shell.ExternalVideoOutput;
+import javax.microedition.shell.J2meHost;
 
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
@@ -52,7 +54,9 @@ import ru.playsoftware.j2meloader.config.Config;
 public class ContextHolder {
 	private static Display display;
 	private static VirtualKeyboard vk;
-	private static WeakReference<MicroActivity> currentActivity;
+	private static WeakReference<Activity> currentActivity;
+	private static WeakReference<J2meHost> currentHost;
+	private static ExternalVideoOutput externalVideoOutput;
 	private static Vibrator vibrator;
 	private static Context appContext;
 	private static final ArrayList<ActivityResultListener> resultListeners = new ArrayList<>();
@@ -85,8 +89,39 @@ public class ContextHolder {
 		return getDisplay().getHeight();
 	}
 
-	public static void setCurrentActivity(MicroActivity activity) {
+	public static void setCurrentActivity(Activity activity, J2meHost host) {
+		attachHost(activity, host, null);
+	}
+
+	public static void attachHost(Activity activity, J2meHost host, ExternalVideoOutput output) {
 		currentActivity = new WeakReference<>(activity);
+		currentHost = new WeakReference<>(host);
+		externalVideoOutput = output;
+	}
+
+	public static void detachHost(J2meHost host) {
+		if (currentHost != null && currentHost.get() == host) {
+			currentHost.clear();
+			currentHost = null;
+			if (currentActivity != null) {
+				currentActivity.clear();
+				currentActivity = null;
+			}
+			externalVideoOutput = null;
+			vk = null;
+		}
+	}
+
+	public static J2meHost getHost() {
+		return currentHost == null ? null : currentHost.get();
+	}
+
+	public static ExternalVideoOutput getExternalVideoOutput() {
+		return externalVideoOutput;
+	}
+
+	public static void setExternalVideoOutput(ExternalVideoOutput output) {
+		externalVideoOutput = output;
 	}
 
 	public static void addActivityResultListener(ActivityResultListener listener) {
@@ -140,7 +175,7 @@ public class ContextHolder {
 	}
 
 	public static boolean requestPermission(String permission) {
-		MicroActivity context = currentActivity.get();
+		Activity context = getActivity();
 		if (context == null) {
 			return false;
 		}
@@ -153,7 +188,7 @@ public class ContextHolder {
 	}
 
 	public static boolean requestPermissions(String[] permissions) {
-		MicroActivity context = currentActivity.get();
+		Activity context = getActivity();
 		if (context == null) {
 			return false;
 		}
@@ -192,8 +227,8 @@ public class ContextHolder {
 		return sb.toString();
 	}
 
-	public static MicroActivity getActivity() {
-		return currentActivity.get();
+	public static Activity getActivity() {
+		return currentActivity == null ? null : currentActivity.get();
 	}
 
 	public static boolean vibrate(int duration) {
