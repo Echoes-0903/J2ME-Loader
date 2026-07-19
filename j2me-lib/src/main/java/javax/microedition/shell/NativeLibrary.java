@@ -117,6 +117,10 @@ public final class NativeLibrary implements AutoCloseable {
 		session.dispatchActivityResult(requestCode, resultCode, data);
 	}
 
+	public void dispatchUiAction(LcdUiAction action) {
+		session.dispatchUiAction(action);
+	}
+
 	@Override
 	public void close() {
 		session.close();

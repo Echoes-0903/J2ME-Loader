@@ -41,6 +41,16 @@ public class Spacer extends Item {
 	}
 
 	@Override
+	public int getMinimumWidth() {
+		return width;
+	}
+
+	@Override
+	public int getMinimumHeight() {
+		return height;
+	}
+
+	@Override
 	public View getItemContentView() {
 		if (view == null) {
 			view = new Space(ContextHolder.getActivity());

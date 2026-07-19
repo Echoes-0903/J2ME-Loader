@@ -111,6 +111,16 @@ public class List extends Screen implements Choice {
 		}
 	}
 
+	/** Returns the immutable Choice type supplied at construction. */
+	public int getListType() {
+		return listType;
+	}
+
+	/** Dispatches the configured implicit-selection command. */
+	public void fireSelectCommand() {
+		fireCommandAction(selectCommand);
+	}
+
 	@Override
 	public synchronized int append(String stringPart, Image imagePart) {
 		int index = mSize;

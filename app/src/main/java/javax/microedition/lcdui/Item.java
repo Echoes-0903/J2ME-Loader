@@ -270,6 +270,11 @@ public abstract class Item implements View.OnCreateContextMenuListener {
 		}
 	}
 
+	/** Returns the commands currently exposed by this item. */
+	public Command[] getCommands() {
+		return commands.toArray(new Command[0]);
+	}
+
 	public void setDefaultCommand(Command cmd) {
 		defaultCommand = cmd;
 		if (cmd == null) {
@@ -277,6 +282,10 @@ public abstract class Item implements View.OnCreateContextMenuListener {
 		}
 		commands.remove(cmd);
 		commands.add(0, cmd);
+	}
+
+	public Command getDefaultCommand() {
+		return defaultCommand;
 	}
 
 	public void setItemCommandListener(ItemCommandListener listener) {
@@ -336,8 +345,15 @@ public abstract class Item implements View.OnCreateContextMenuListener {
 	}
 
 	public void fireDefaultCommandAction() {
-		if (defaultCommand != null) {
+		if (defaultCommand != null && listener != null) {
 			Display.postEvent(CommandActionEvent.getInstance(listener, defaultCommand, this));
+		}
+	}
+
+	/** Dispatches one of this item's commands through the MIDP event queue. */
+	public void fireCommandAction(Command command) {
+		if (command != null && listener != null && commands.contains(command)) {
+			Display.postEvent(CommandActionEvent.getInstance(listener, command, this));
 		}
 	}
 }

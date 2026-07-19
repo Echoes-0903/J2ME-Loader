@@ -6,12 +6,10 @@ package javax.microedition.shell;
 
 import android.app.Activity;
 import android.app.Application;
-import android.app.Dialog;
 import android.content.Intent;
 import android.os.Handler;
 import android.os.Looper;
 import android.view.KeyEvent;
-import android.view.View;
 
 import java.io.File;
 import java.util.LinkedHashMap;
@@ -26,6 +24,8 @@ import javax.microedition.util.ContextHolder;
 
 /** A single embedded MIDlet session owned by an ordinary Android Activity. */
 public final class J2meSession implements J2meHost, AutoCloseable {
+	private static final long LCDUI_REFRESH_INTERVAL_MS = 100;
+
 	public enum State {
 		IDLE,
 		PREPARING,
@@ -49,16 +49,12 @@ public final class J2meSession implements J2meHost, AutoCloseable {
 		default void onOptionsMenuRequested() {
 		}
 
-		/** Gives a view-backed LCDUI screen to the host without attaching it to a container. */
-		default void onShowView(String className, String title, View view) {
+		/** Delivers an immutable semantic snapshot of the current non-Canvas LCDUI screen. */
+		default void onLcdUiStateChanged(LcdUiState state) {
 		}
 
-		/** Tells the host to detach a previously supplied LCDUI view. */
-		default void onHideView(View view) {
-		}
-
-		/** Gives a prepared MIDP alert dialog to the host; the host decides when to show it. */
-		default void onShowDialog(Dialog dialog) {
+		/** Tells the host to remove a semantic LCDUI screen. */
+		default void onLcdUiClosed(long screenId) {
 		}
 
 		default void onExitRequested(J2meSession session) {
@@ -83,9 +79,24 @@ public final class J2meSession implements J2meHost, AutoCloseable {
 	private volatile boolean closed;
 	private volatile boolean finished;
 	private Displayable current;
-	private View currentView;
+	private LcdUiBridge.Capture currentUiCapture;
+	private String currentUiFingerprint;
+	private long uiRevision;
 	private ExternalVideoOutput videoOutput;
 	private String appName = "J2ME";
+	private final Runnable uiRefresh = new Runnable() {
+		@Override
+		public void run() {
+			Displayable displayable = current;
+			if (closed || finished || displayable == null || displayable instanceof Canvas) {
+				return;
+			}
+			emitLcdUi(displayable, false);
+			if (!closed && !finished && current == displayable) {
+				mainHandler.postDelayed(this, LCDUI_REFRESH_INTERVAL_MS);
+			}
+		}
+	};
 
 	J2meSession(Activity activity, Callbacks callbacks) {
 		if (activity == null) {
@@ -261,6 +272,27 @@ public final class J2meSession implements J2meHost, AutoCloseable {
 		ContextHolder.notifyOnActivityResult(requestCode, resultCode, data);
 	}
 
+	/** Sends a host-rendered UI action back to the MIDP event queue. */
+	public void dispatchUiAction(LcdUiAction action) {
+		if (action == null) {
+			throw new NullPointerException("LCDUI action is required");
+		}
+		mainHandler.post(() -> {
+			if (LcdUiBridge.dispatch(currentUiCapture, action)) {
+				Displayable displayable = current;
+				LcdUiAction.Type type = action.getType();
+				boolean directlyChangesState = type == LcdUiAction.Type.SELECT
+						|| type == LcdUiAction.Type.SET_TEXT
+						|| type == LcdUiAction.Type.SET_GAUGE
+						|| type == LcdUiAction.Type.SET_DATE;
+				if (directlyChangesState && displayable != null
+						&& !(displayable instanceof Canvas)) {
+					emitLcdUi(displayable, true);
+				}
+			}
+		});
+	}
+
 	public State getState() {
 		return state;
 	}
@@ -279,14 +311,10 @@ public final class J2meSession implements J2meHost, AutoCloseable {
 		Displayable previous = current;
 		current = displayable;
 		mainHandler.post(() -> {
-			View previousView = currentView;
-			currentView = null;
+			closeLcdUi();
 			if (previous != null) {
 				if (previous instanceof Canvas && videoOutput != null) {
 					((Canvas) previous).hideExternal();
-				}
-				if (previousView != null) {
-					callbacks.onHideView(previousView);
 				}
 				previous.clearDisplayableView();
 			}
@@ -296,10 +324,9 @@ public final class J2meSession implements J2meHost, AutoCloseable {
 				Canvas canvas = (Canvas) displayable;
 				canvas.showExternal();
 				videoOutput.onVideoSizeChanged(canvas.getWidth(), canvas.getHeight());
-			} else if (displayable != null && !(displayable instanceof Alert)) {
-				View view = displayable.getDisplayableView();
-				currentView = view;
-				callbacks.onShowView(displayable.getClass().getName(), title, view);
+			} else if (displayable != null) {
+				emitLcdUi(displayable, true);
+				mainHandler.postDelayed(uiRefresh, LCDUI_REFRESH_INTERVAL_MS);
 			}
 			activity.setTitle(title);
 			callbacks.onTitleChanged(title);
@@ -326,11 +353,7 @@ public final class J2meSession implements J2meHost, AutoCloseable {
 			visible = false;
 			Displayable old = current;
 			current = null;
-			View oldView = currentView;
-			currentView = null;
-			if (oldView != null) {
-				callbacks.onHideView(oldView);
-			}
+			closeLcdUi();
 			if (old != null) {
 				if (old instanceof Canvas && videoOutput != null) {
 					((Canvas) old).hideExternal();
@@ -361,11 +384,7 @@ public final class J2meSession implements J2meHost, AutoCloseable {
 
 	@Override
 	public boolean requestAlert(Alert alert) {
-		if (alert == null) {
-			return false;
-		}
-		mainHandler.post(() -> callbacks.onShowDialog(alert.prepareDialog()));
-		return true;
+		return alert != null;
 	}
 
 	@Override
@@ -386,6 +405,34 @@ public final class J2meSession implements J2meHost, AutoCloseable {
 	private Canvas currentCanvas() {
 		Displayable displayable = current;
 		return displayable instanceof Canvas ? (Canvas) displayable : null;
+	}
+
+	private void emitLcdUi(Displayable displayable, boolean force) {
+		if (displayable != current || displayable instanceof Canvas) {
+			return;
+		}
+		try {
+			LcdUiBridge.Capture capture = LcdUiBridge.capture(displayable, uiRevision + 1);
+			String fingerprint = capture.state.contentFingerprint();
+			currentUiCapture = capture;
+			if (force || !fingerprint.equals(currentUiFingerprint)) {
+				uiRevision++;
+				currentUiFingerprint = fingerprint;
+				callbacks.onLcdUiStateChanged(capture.state);
+			}
+		} catch (IndexOutOfBoundsException ignored) {
+			// A MIDlet mutated a Form/List while it was snapshotted; retry next tick.
+		}
+	}
+
+	private void closeLcdUi() {
+		mainHandler.removeCallbacks(uiRefresh);
+		LcdUiBridge.Capture capture = currentUiCapture;
+		currentUiCapture = null;
+		currentUiFingerprint = null;
+		if (capture != null) {
+			callbacks.onLcdUiClosed(capture.state.getScreenId());
+		}
 	}
 
 	private void fail(Throwable error) {

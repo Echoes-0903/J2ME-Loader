@@ -438,6 +438,11 @@ public class ChoiceGroup extends Item implements Choice {
 		return fitPolicy;
 	}
 
+	/** Returns the immutable Choice type supplied at construction. */
+	public int getChoiceType() {
+		return choiceType;
+	}
+
 	@Override
 	public int size() {
 		synchronized (selected) {
