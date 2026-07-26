@@ -9,6 +9,11 @@ on:
       - "j2me-lib-v*"
   pull_request:
   workflow_dispatch:
+    inputs:
+      version:
+        description: Maven package version
+        required: true
+        default: 1.8.2-external-output.5
 
 concurrency:
   group: j2me-lib-${{ github.ref }}
@@ -16,6 +21,7 @@ concurrency:
 
 permissions:
   contents: write
+  packages: write
 
 env:
   J2ME_NDK_VERSION: 27.1.12297006
@@ -55,6 +61,8 @@ jobs:
               echo "Invalid release tag: ${GITHUB_REF_NAME}" >&2
               exit 1
             fi
+          elif [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
+            version="${{ inputs.version }}"
           else
             version="1.8.2-external-output-SNAPSHOT"
           fi
@@ -111,34 +119,18 @@ jobs:
             j2me-lib/build/outputs/aar/j2me-lib-release.aar
             j2me-lib/build/repo/**
 
-      - name: Publish Maven repository branch
-        if: github.ref_type == 'tag'
+      - name: Publish GitHub Packages Maven artifact
+        if: github.ref_type == 'tag' || github.event_name == 'workflow_dispatch'
         env:
-          GH_TOKEN: ${{ github.token }}
-          RELEASE_VERSION: ${{ steps.version.outputs.version }}
+          GITHUB_ACTOR: ${{ github.actor }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         shell: bash
         run: |
-          set -euo pipefail
-          repo_url="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
-          publish_dir="$(mktemp -d)"
-
-          if git ls-remote --exit-code --heads "${repo_url}" maven >/dev/null 2>&1; then
-            git clone --depth 1 --branch maven "${repo_url}" "${publish_dir}"
-          else
-            git -C "${publish_dir}" init
-            git -C "${publish_dir}" checkout --orphan maven
-            git -C "${publish_dir}" remote add origin "${repo_url}"
-          fi
-
-          cp -a "${GITHUB_WORKSPACE}/j2me-lib/build/repo/." "${publish_dir}/"
-          git -C "${publish_dir}" config user.name "github-actions[bot]"
-          git -C "${publish_dir}" config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git -C "${publish_dir}" add --all
-
-          if ! git -C "${publish_dir}" diff --cached --quiet; then
-            git -C "${publish_dir}" commit -m "Publish j2me-loader ${RELEASE_VERSION}"
-            git -C "${publish_dir}" push origin HEAD:maven
-          fi
+          ./gradlew --no-daemon \
+            -Pj2meEmbeddingBuild \
+            -Pj2meNdkVersion="${J2ME_NDK_VERSION}" \
+            -Pj2meVersion="${{ steps.version.outputs.version }}" \
+            :j2me-lib:publishReleasePublicationToGitHubPackagesRepository
 
       - name: Publish GitHub release
         if: github.ref_type == 'tag'

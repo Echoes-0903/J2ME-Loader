@@ -30,11 +30,17 @@ runtime.dispatchUiAction(LcdUiAction.setText(state.getScreenId(), itemId, text))
 
 ## Consume a release
 
-Add the public Maven branch to `dependencyResolutionManagement.repositories`:
+Add GitHub Packages to `dependencyResolutionManagement.repositories`:
 
 ```groovy
 maven {
-    url = uri('https://raw.githubusercontent.com/Echoes-0903/J2ME-Loader/maven/')
+    url = uri('https://maven.pkg.github.com/echoes-0903/J2ME-Loader')
+    credentials {
+        username = providers.gradleProperty('gpr.user').orNull
+                ?: System.getenv('GITHUB_ACTOR')
+        password = providers.gradleProperty('gpr.key').orNull
+                ?: System.getenv('GITHUB_TOKEN')
+    }
     content {
         includeGroup 'ru.playsoftware.j2meloader'
     }
@@ -47,8 +53,19 @@ Then add the fixed release dependency:
 implementation 'ru.playsoftware.j2meloader:j2me-loader:1.8.2-external-output.5'
 ```
 
-Tags named `j2me-lib-v<version>` build the release AAR, update the `maven`
-branch, and attach the AAR and POM to a GitHub Release.
+Use a classic personal access token with `read:packages` in the user-level
+`~/.gradle/gradle.properties` file:
+
+```properties
+gpr.user=YOUR_GITHUB_USERNAME
+gpr.key=YOUR_CLASSIC_PAT
+```
+
+For private repositories, the token also needs `repo`. Never commit this file.
+
+Tags named `j2me-lib-v<version>` build the release AAR, publish it to GitHub
+Packages, and attach the AAR and POM to a GitHub Release. The workflow can also
+be run manually with an explicit Maven version.
 
 ## Build locally
 
