@@ -269,8 +269,11 @@ final class LcdUiBridge {
 			choiceType = choice.getChoiceType();
 			int size = choice.size();
 			for (int index = 0; index < size; index++) {
+				boolean selected = choiceType == Choice.MULTIPLE
+						? choice.isSelected(index)
+						: choice.getSelectedIndex() == index;
 				options.add(captureOption(choice.getString(index), choice.getImage(index),
-						choice.isSelected(index)));
+						selected));
 			}
 		} else if (item instanceof Gauge) {
 			type = LcdUiState.ItemType.GAUGE;
