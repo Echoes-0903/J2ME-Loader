@@ -139,6 +139,8 @@ dependencies {
     api 'com.github.nikita36078:filepicker:4.3.0'
     implementation(platform('org.jetbrains.kotlin:kotlin-bom:1.8.0'))
     implementation 'org.jetbrains.kotlin:kotlin-stdlib'
+
+    testImplementation 'junit:junit:4.13.2'
 }
 
 afterEvaluate {

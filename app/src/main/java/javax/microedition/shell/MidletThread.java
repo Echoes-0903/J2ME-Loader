@@ -47,12 +47,12 @@ public class MidletThread extends HandlerThread implements Handler.Callback {
 	private static final int PAUSED = 2;
 	private static final int DESTROYED = 3;
 	public static String[] startAfterDestroy;
-	private static MidletThread instance;
+	private static volatile MidletThread instance;
 	private final MicroLoader microLoader;
 	private final String mainClass;
 	private MIDlet midlet;
 	private final Handler handler;
-	private int state;
+	private volatile int state;
 
 	private MidletThread(MicroLoader microLoader, String mainClass) {
 		super("MidletMain");
@@ -92,6 +92,8 @@ public class MidletThread extends HandlerThread implements Handler.Callback {
 	public static void notifyPaused() {
 		if (instance != null) {
 			instance.state = PAUSED;
+			J2meHost host = ContextHolder.getHost();
+			if (host != null) host.onMidletPaused();
 		}
 	}
 
@@ -102,8 +104,36 @@ public class MidletThread extends HandlerThread implements Handler.Callback {
 
 	public static void resumeApp() {
 		J2meHost host = ContextHolder.getHost();
+		if (host != null && host.requestMidletResume()) return;
 		if (instance != null && host != null && host.isVisible())
 			instance.handler.obtainMessage(START).sendToTarget();
+	}
+
+	/** Embedded hosts receive completion after the game callback, not after message enqueue. */
+	interface LifecycleCallback {
+		void complete(boolean paused, Throwable error);
+	}
+
+	static void requestLifecycle(J2meHost owner, boolean paused, LifecycleCallback completion) {
+		MidletThread thread = instance;
+		if (thread == null) {
+			completion.complete(true, new IllegalStateException("MIDlet is not initialized"));
+			return;
+		}
+		if (!thread.handler.post(() -> {
+			if (instance != thread || ContextHolder.getHost() != owner) {
+				completion.complete(true, new IllegalStateException("MIDlet session is no longer active"));
+				return;
+			}
+			try {
+				thread.handleMessage(thread.handler.obtainMessage(paused ? PAUSE : START));
+				completion.complete(thread.state != STARTED, null);
+			} catch (Throwable error) {
+				completion.complete(true, error);
+			}
+		})) {
+			completion.complete(true, new IllegalStateException("MIDlet lifecycle thread has stopped"));
+		}
 	}
 
 	static void destroyApp() {
@@ -127,8 +157,11 @@ public class MidletThread extends HandlerThread implements Handler.Callback {
 				canvas.postKeyReleased(Canvas.KEY_END);
 			}
 		}
-		if (instance != null) {
-			instance.handler.obtainMessage(DESTROY).sendToTarget();
+		MidletThread thread = instance;
+		if (thread != null) {
+			if (!thread.handler.sendMessage(thread.handler.obtainMessage(DESTROY))) {
+				notifyDestroyed();
+			}
 		} else if (host != null) {
 			host.finishSession();
 		}

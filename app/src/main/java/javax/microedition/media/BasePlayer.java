@@ -26,18 +26,24 @@ import javax.microedition.media.control.VolumeControl;
 
 public class BasePlayer implements Player, VolumeControl, PanControl {
 	private TimeBase timeBase;
-	protected int state;
+	protected volatile int state;
 	private int loopCount;
 
 	private final ArrayList<PlayerListener> listeners;
 	private final HashMap<String, Control> controls;
 	private boolean mute;
+	private boolean hostMuted;
+	private boolean hostPaused;
+	private boolean backendStarted;
+	private boolean completionPending;
 	private int level, pan;
 
 	public BasePlayer() {
 		state = UNREALIZED;
 
 		mute = false;
+		hostMuted = MediaRuntimeAudio.register(this);
+		hostPaused = MediaRuntimeAudio.isHostPaused();
 		level = 100;
 		pan = 0;
 		loopCount = 1;
@@ -56,14 +62,20 @@ public class BasePlayer implements Player, VolumeControl, PanControl {
 		controls.put(name, control);
 	}
 
-	public void complete() {
-		if (state == CLOSED) {
+	public synchronized void complete() {
+		if (state != STARTED) {
 			return;
 		}
+		if (hostPaused || MediaRuntimeAudio.isHostPaused()) {
+			completionPending = true;
+			return;
+		}
+		completionPending = false;
 		postEvent(PlayerListener.END_OF_MEDIA, new Long(getMediaTime()));
 
 		if (loopCount == 1) {
 			state = PREFETCHED;
+			backendStarted = false;
 			doReset();
 		} else if (loopCount > 1) {
 			loopCount--;
@@ -71,6 +83,7 @@ public class BasePlayer implements Player, VolumeControl, PanControl {
 
 		if (state == STARTED && loopCount != -1) {
 			doStart();
+			backendStarted = true;
 			postEvent(PlayerListener.STARTED, new Long(getMediaTime()));
 		}
 	}
@@ -150,7 +163,12 @@ public class BasePlayer implements Player, VolumeControl, PanControl {
 		prefetch();
 
 		if (state == PREFETCHED) {
-			doStart();
+			hostPaused = MediaRuntimeAudio.isHostPaused();
+			updateVolume();
+			if (!hostPaused) {
+				doStart();
+				backendStarted = true;
+			}
 
 			state = STARTED;
 			postEvent(PlayerListener.STARTED, new Long(getMediaTime()));
@@ -161,7 +179,9 @@ public class BasePlayer implements Player, VolumeControl, PanControl {
 	public synchronized void stop() {
 		checkClosed();
 		if (state == STARTED) {
-			doStop();
+			if (backendStarted && !hostPaused) doStop();
+			backendStarted = false;
+			completionPending = false;
 
 			state = PREFETCHED;
 			postEvent(PlayerListener.STOPPED, new Long(getMediaTime()));
@@ -192,6 +212,7 @@ public class BasePlayer implements Player, VolumeControl, PanControl {
 
 			state = CLOSED;
 			postEvent(PlayerListener.CLOSED, null);
+			MediaRuntimeAudio.unregister(this);
 		}
 	}
 
@@ -270,9 +291,13 @@ public class BasePlayer implements Player, VolumeControl, PanControl {
 	// VolumeControl
 
 	private void updateVolume() {
+		updateVolume(true);
+	}
+
+	private void updateVolume(boolean notifyGame) {
 		float left, right;
 
-		if (mute) {
+		if (mute || hostMuted) {
 			left = right = 0;
 		} else {
 			if (level == 100) {
@@ -291,7 +316,7 @@ public class BasePlayer implements Player, VolumeControl, PanControl {
 		}
 
 		doSetVolume(left, right);
-		postEvent(PlayerListener.VOLUME_CHANGED, this);
+		if (notifyGame) postEvent(PlayerListener.VOLUME_CHANGED, this);
 	}
 
 	@Override
@@ -308,6 +333,32 @@ public class BasePlayer implements Player, VolumeControl, PanControl {
 	@Override
 	public boolean isMuted() {
 		return mute;
+	}
+
+	synchronized void setHostMuted(boolean muted) {
+		if (state == CLOSED) {
+			return;
+		}
+		hostMuted = muted;
+		updateVolume(false);
+	}
+
+	/** Backend-only pause: no STARTED/STOPPED events and no logical Player state changes. */
+	synchronized void updateHostPause() {
+		boolean paused = MediaRuntimeAudio.isHostPaused();
+		if (state == CLOSED || hostPaused == paused) return;
+		hostPaused = paused;
+		if (state != STARTED) return;
+		if (paused) {
+			if (backendStarted) doHostPause();
+		} else if (completionPending) {
+			complete();
+		} else {
+			updateVolume(false);
+			if (backendStarted) doHostResume();
+			else doStart();
+			backendStarted = true;
+		}
 	}
 
 	@Override
@@ -380,6 +431,14 @@ public class BasePlayer implements Player, VolumeControl, PanControl {
 	}
 
 	public void doStop() {
+	}
+
+	protected void doHostPause() {
+		doStop();
+	}
+
+	protected void doHostResume() {
+		doStart();
 	}
 
 	public void doClose() {

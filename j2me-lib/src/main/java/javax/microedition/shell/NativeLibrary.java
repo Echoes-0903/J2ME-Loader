@@ -32,6 +32,12 @@ public final class NativeLibrary implements AutoCloseable {
 		return this;
 	}
 
+	/** Enables or mutes audio output for the active embedded session. */
+	public NativeLibrary setAudioEnabled(boolean enabled) {
+		session.setAudioEnabled(enabled);
+		return this;
+	}
+
 	public NativeLibrary overrideConfig(J2meConfig config) {
 		if (config == null) {
 			throw new NullPointerException("J2ME configuration is required");
@@ -73,10 +79,12 @@ public final class NativeLibrary implements AutoCloseable {
 		startGame(new File(midletJarPath), new File(conversionDirectoryPath));
 	}
 
+	/** Requests cooperative pause; onStateChanged(PAUSED) acknowledges completed callbacks. */
 	public void pause() {
 		session.pause();
 	}
 
+	/** Requests startApp/showNotify asynchronously. A game may reject resumption and stay PAUSED. */
 	public void resume() {
 		session.resume();
 	}

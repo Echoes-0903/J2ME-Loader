@@ -7,24 +7,34 @@ package javax.microedition.shell;
 import android.app.Activity;
 import android.app.Application;
 import android.content.Intent;
+import android.graphics.Bitmap;
 import android.os.Handler;
 import android.os.Looper;
 import android.view.KeyEvent;
 
 import java.io.File;
 import java.util.LinkedHashMap;
+import java.util.Map;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 
 import javax.microedition.lcdui.Alert;
 import javax.microedition.lcdui.Canvas;
 import javax.microedition.lcdui.Displayable;
+import javax.microedition.lcdui.Display;
+import javax.microedition.lcdui.event.RunnableEvent;
 import javax.microedition.lcdui.keyboard.KeyMapper;
+import javax.microedition.media.MediaRuntimeAudio;
 import javax.microedition.util.ContextHolder;
 
 /** A single embedded MIDlet session owned by an ordinary Android Activity. */
 public final class J2meSession implements J2meHost, AutoCloseable {
 	private static final long LCDUI_REFRESH_INTERVAL_MS = 100;
+	private static final long LIFECYCLE_TIMEOUT_SECONDS = 5;
 
 	public enum State {
 		IDLE,
@@ -47,6 +57,13 @@ public final class J2meSession implements J2meHost, AutoCloseable {
 		}
 
 		default void onOptionsMenuRequested() {
+		}
+
+		/**
+		 * Main-thread vibration request: positive milliseconds replace the current effect;
+		 * zero cancels it. The default is a no-op, never an Android vibrator fallback.
+		 */
+		default void onVibrationRequested(int durationMillis) {
 		}
 
 		/** Delivers an immutable semantic snapshot of the current non-Canvas LCDUI screen. */
@@ -73,22 +90,42 @@ public final class J2meSession implements J2meHost, AutoCloseable {
 		thread.setDaemon(true);
 		return thread;
 	});
+	private final ExecutorService lifecycleWorker = Executors.newSingleThreadExecutor(r ->
+			new Thread(r, "J2meLifecycle"));
+	private final SessionLifecycleGate lifecycleGate = new SessionLifecycleGate();
+	private volatile boolean midletReady;
+	// Only the serial lifecycle worker changes the externally shown Canvas.
+	private Canvas shownCanvas;
+	// These maps are accessed only inside MIDP events (also serialized in ImmediateMode).
+	private final Map<Integer, Canvas> pressedKeys = new LinkedHashMap<>();
+	private final Map<Integer, PointerPress> pressedPointers = new LinkedHashMap<>();
+	private final ExternalVideoOutput gatedVideoOutput = new ExternalVideoOutput() {
+		@Override public void onFrame(Bitmap bitmap) {
+			ExternalVideoOutput output = videoOutput;
+			// Never wait here: Canvas calls this while holding its buffer lock.
+			if (output != null && visible && lifecycleGate.acceptsOutput()) output.onFrame(bitmap);
+		}
+		@Override public void onVideoSizeChanged(int width, int height) {
+			ExternalVideoOutput output = videoOutput;
+			if (output != null && !closed && !finished) output.onVideoSizeChanged(width, height);
+		}
+	};
 
 	private volatile State state = State.IDLE;
 	private volatile boolean visible;
 	private volatile boolean closed;
 	private volatile boolean finished;
-	private Displayable current;
+	private volatile Displayable current;
 	private LcdUiBridge.Capture currentUiCapture;
 	private String currentUiFingerprint;
 	private long uiRevision;
-	private ExternalVideoOutput videoOutput;
+	private volatile ExternalVideoOutput videoOutput;
 	private String appName = "J2ME";
 	private final Runnable uiRefresh = new Runnable() {
 		@Override
 		public void run() {
 			Displayable displayable = current;
-			if (closed || finished || displayable == null || displayable instanceof Canvas) {
+			if (!lifecycleGate.acceptsOutput() || displayable == null || displayable instanceof Canvas) {
 				return;
 			}
 			emitLcdUi(displayable, false);
@@ -109,8 +146,13 @@ public final class J2meSession implements J2meHost, AutoCloseable {
 	public void setVideoOutput(ExternalVideoOutput output) {
 		videoOutput = output;
 		if (ContextHolder.getHost() == this) {
-			ContextHolder.setExternalVideoOutput(output);
+			ContextHolder.setExternalVideoOutput(gatedVideoOutput);
 		}
+	}
+
+	/** Enables or mutes all media players owned by the embedded MIDlet process. */
+	public void setAudioEnabled(boolean enabled) {
+		MediaRuntimeAudio.setHostMuted(!enabled);
 	}
 
 	public synchronized void start(File midletJar, File conversionDirectory, J2meConfig config) {
@@ -131,7 +173,8 @@ public final class J2meSession implements J2meHost, AutoCloseable {
 
 		Application application = activity.getApplication();
 		ContextHolder.setApplication(application);
-		ContextHolder.attachHost(activity, this, videoOutput);
+		ContextHolder.attachHost(activity, this, gatedVideoOutput);
+		MediaRuntimeAudio.setHostPaused(true);
 		setState(State.PREPARING);
 
 		worker.execute(() -> {
@@ -146,7 +189,7 @@ public final class J2meSession implements J2meHost, AutoCloseable {
 	}
 
 	private void startPrepared(J2meInstaller.PreparedApp prepared) {
-		if (closed) {
+		if (closed || finished || state != State.PREPARING) {
 			return;
 		}
 		try {
@@ -163,48 +206,145 @@ public final class J2meSession implements J2meHost, AutoCloseable {
 			}
 			String mainClass = midlets.keySet().iterator().next();
 			MidletThread.create(loader, mainClass);
-			setState(visible ? State.RUNNING : State.PAUSED);
-			if (visible) {
-				MidletThread.resumeApp();
-			}
+			midletReady = true;
+			requestLifecycle();
 		} catch (Throwable error) {
 			fail(error);
 		}
 	}
 
-	public void resume() {
+	public synchronized void resume() {
+		if (isTerminal()) return;
 		visible = true;
-		if (state == State.PAUSED || state == State.RUNNING) {
-			MidletThread.resumeApp();
-			setState(State.RUNNING);
-		}
+		requestLifecycle();
 	}
 
-	public void pause() {
+	public synchronized void pause() {
+		if (isTerminal()) return;
 		visible = false;
-		if (state == State.RUNNING) {
-			MidletThread.pauseApp();
-			setState(State.PAUSED);
+		requestLifecycle();
+	}
+
+	private synchronized void requestLifecycle() {
+		requestLifecycle(visible);
+	}
+
+	private synchronized void requestLifecycle(boolean resume) {
+		long request = lifecycleGate.request(resume);
+		if (request < 0) return;
+		if (!resume) cancelVibration();
+		if (!midletReady) return;
+		executeLifecycle(() -> {
+			if (!lifecycleGate.isCurrent(request)) return;
+			try {
+				// Keep audio held until both MIDlet and Canvas callbacks have completed.
+				MediaRuntimeAudio.setHostPaused(true);
+				if (!resume) {
+					releaseInputs();
+					reconcileCanvas(false);
+				}
+				CountDownLatch completed = new CountDownLatch(1);
+				boolean[] paused = {true};
+				Throwable[] failure = {null};
+				MidletThread.requestLifecycle(this, !resume, (actualPaused, error) -> {
+					paused[0] = actualPaused;
+					failure[0] = error;
+					completed.countDown();
+				});
+				awaitCallback(completed);
+				if (!lifecycleGate.isCurrent(request)) return;
+				if (failure[0] != null) throw new IllegalStateException("MIDlet lifecycle failed", failure[0]);
+				boolean resumed = resume && visible && !paused[0];
+				reconcileCanvas(resumed);
+				if (!lifecycleGate.complete(request, resumed)) return;
+				MediaRuntimeAudio.setHostPaused(!resumed);
+				State settled = resumed ? State.RUNNING : State.PAUSED;
+				state = settled;
+				mainHandler.post(() -> {
+					if (lifecycleGate.isCurrent(request) && state == settled) {
+						callbacks.onStateChanged(settled);
+					}
+				});
+				if (resumed) {
+					Canvas canvas = currentCanvas();
+					if (canvas != null) canvas.repaint();
+					mainHandler.post(() -> {
+						mainHandler.removeCallbacks(uiRefresh);
+						uiRefresh.run();
+					});
+				}
+			} catch (Exception error) {
+				if (error instanceof InterruptedException) Thread.currentThread().interrupt();
+				if (lifecycleGate.isCurrent(request)) mainHandler.post(() -> {
+					if (lifecycleGate.isCurrent(request)) fail(error);
+				});
+			}
+		});
+	}
+
+	private void reconcileCanvas(boolean active) throws InterruptedException, TimeoutException {
+		Canvas next = active && visible ? currentCanvas() : null;
+		if (shownCanvas == next) return;
+		releaseInputs();
+		if (shownCanvas != null) shownCanvas.hideExternal();
+		shownCanvas = next;
+		if (next != null) next.showExternal();
+		CountDownLatch completed = new CountDownLatch(1);
+		Display.postEvent(RunnableEvent.getInstance(completed::countDown));
+		awaitCallback(completed);
+	}
+
+	private static void awaitCallback(CountDownLatch completed)
+			throws InterruptedException, TimeoutException {
+		if (!completed.await(LIFECYCLE_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
+			throw new TimeoutException("J2ME lifecycle callback did not complete within 5 seconds");
 		}
 	}
 
-	public void stop() {
+	private void executeLifecycle(Runnable operation) {
+		try {
+			lifecycleWorker.execute(operation);
+		} catch (RejectedExecutionException error) {
+			if (!isTerminal()) throw error;
+		}
+	}
+
+	private boolean isTerminal() {
+		return closed || finished || state == State.STOPPING || state == State.STOPPED
+				|| state == State.FAILED;
+	}
+
+	public synchronized void stop() {
 		if (state == State.STOPPED || state == State.STOPPING) {
 			return;
 		}
-		State previousState = state;
+		visible = false;
+		lifecycleGate.close();
+		cancelVibration();
 		setState(State.STOPPING);
-		if (previousState == State.PREPARING || previousState == State.IDLE
-				|| previousState == State.FAILED) {
+		if (!midletReady) {
 			finishSession();
 			return;
 		}
-		MidletThread.destroyApp();
+		stopMidlet();
+	}
+
+	private void stopMidlet() {
+		executeLifecycle(() -> {
+			try {
+				MediaRuntimeAudio.setHostPaused(true);
+				reconcileCanvas(false);
+			} catch (Exception ignored) {
+				// Teardown must still reach destroyApp if a visibility callback failed.
+			} finally {
+				MidletThread.destroyApp();
+			}
+		});
 	}
 
 	public boolean dispatchKeyEvent(KeyEvent event) {
 		Canvas canvas = currentCanvas();
-		if (canvas == null || event == null) {
+		if (canvas == null || event == null || !lifecycleGate.acceptsOutput()) {
 			return false;
 		}
 		int keyCode = KeyMapper.convertAndroidKeyCode(event.getKeyCode(), event);
@@ -220,13 +360,15 @@ public final class J2meSession implements J2meHost, AutoCloseable {
 		switch (event.getAction()) {
 			case KeyEvent.ACTION_DOWN:
 				if (event.getRepeatCount() == 0) {
-					canvas.postKeyPressed(keyCode);
+					keyDown(keyCode);
 				} else {
-					canvas.postKeyRepeated(keyCode);
+					postInput(() -> {
+						if (pressedKeys.get(keyCode) == canvas) canvas.postKeyRepeated(keyCode);
+					});
 				}
 				return true;
 			case KeyEvent.ACTION_UP:
-				canvas.postKeyReleased(keyCode);
+				keyUp(keyCode);
 				return true;
 			default:
 				return false;
@@ -234,37 +376,84 @@ public final class J2meSession implements J2meHost, AutoCloseable {
 	}
 
 	public void keyDown(int midpKeyCode) {
-		Canvas canvas = currentCanvas();
-		if (canvas != null) {
-			canvas.postKeyPressed(midpKeyCode);
-		}
+		postInput(() -> {
+			Canvas canvas = currentCanvas();
+			if (canvas != null && !pressedKeys.containsKey(midpKeyCode)) {
+				pressedKeys.put(midpKeyCode, canvas);
+				canvas.postKeyPressed(midpKeyCode);
+			}
+		});
 	}
 
 	public void keyUp(int midpKeyCode) {
-		Canvas canvas = currentCanvas();
-		if (canvas != null) {
-			canvas.postKeyReleased(midpKeyCode);
-		}
+		Display.postEvent(RunnableEvent.getInstance(() -> {
+			Canvas canvas = pressedKeys.remove(midpKeyCode);
+			if (canvas != null) canvas.postKeyReleased(midpKeyCode);
+		}));
 	}
 
 	public void pointerDown(int pointer, int x, int y) {
-		Canvas canvas = currentCanvas();
-		if (canvas != null) {
-			canvas.postPointerPressed(pointer, x, y);
-		}
+		postInput(() -> {
+			Canvas canvas = currentCanvas();
+			if (canvas != null && !pressedPointers.containsKey(pointer)) {
+				pressedPointers.put(pointer, new PointerPress(canvas, x, y));
+				canvas.postPointerPressed(pointer, x, y);
+			}
+		});
 	}
 
 	public void pointerMove(int pointer, int x, int y) {
-		Canvas canvas = currentCanvas();
-		if (canvas != null) {
-			canvas.postPointerDragged(pointer, x, y);
-		}
+		postInput(() -> {
+			PointerPress press = pressedPointers.get(pointer);
+			if (press != null) {
+				press.x = x;
+				press.y = y;
+				press.canvas.postPointerDragged(pointer, x, y);
+			}
+		});
 	}
 
 	public void pointerUp(int pointer, int x, int y) {
-		Canvas canvas = currentCanvas();
-		if (canvas != null) {
-			canvas.postPointerReleased(pointer, x, y);
+		Display.postEvent(RunnableEvent.getInstance(() -> {
+			PointerPress press = pressedPointers.remove(pointer);
+			if (press != null) press.canvas.postPointerReleased(pointer, x, y);
+		}));
+	}
+
+	private void postInput(Runnable input) {
+		if (!lifecycleGate.acceptsOutput()) return;
+		long revision = lifecycleGate.revision();
+		Displayable target = current;
+		Display.postEvent(RunnableEvent.getInstance(() -> {
+			if (lifecycleGate.isCurrent(revision) && lifecycleGate.acceptsOutput()
+					&& current == target) input.run();
+		}));
+	}
+
+	private void releaseInputs() throws InterruptedException, TimeoutException {
+		CountDownLatch completed = new CountDownLatch(1);
+		Display.postEvent(RunnableEvent.getInstance(() -> {
+			for (Map.Entry<Integer, Canvas> key : pressedKeys.entrySet()) {
+				key.getValue().postKeyReleased(key.getKey());
+			}
+			pressedKeys.clear();
+			for (Map.Entry<Integer, PointerPress> pointer : pressedPointers.entrySet()) {
+				PointerPress press = pointer.getValue();
+				press.canvas.postPointerReleased(pointer.getKey(), press.x, press.y);
+			}
+			pressedPointers.clear();
+			Display.postEvent(RunnableEvent.getInstance(completed::countDown));
+		}));
+		awaitCallback(completed);
+	}
+
+	private static final class PointerPress {
+		final Canvas canvas;
+		int x, y;
+		PointerPress(Canvas canvas, int x, int y) {
+			this.canvas = canvas;
+			this.x = x;
+			this.y = y;
 		}
 	}
 
@@ -277,7 +466,9 @@ public final class J2meSession implements J2meHost, AutoCloseable {
 		if (action == null) {
 			throw new NullPointerException("LCDUI action is required");
 		}
+		long revision = lifecycleGate.revision();
 		mainHandler.post(() -> {
+			if (!lifecycleGate.isCurrent(revision) || !lifecycleGate.acceptsOutput()) return;
 			if (LcdUiBridge.dispatch(currentUiCapture, action)) {
 				Displayable displayable = current;
 				LcdUiAction.Type type = action.getType();
@@ -308,21 +499,19 @@ public final class J2meSession implements J2meHost, AutoCloseable {
 
 	@Override
 	public void setCurrent(Displayable displayable) {
+		if (isTerminal()) return;
 		Displayable previous = current;
 		current = displayable;
 		mainHandler.post(() -> {
+			if (isTerminal() || current != displayable) return;
 			closeLcdUi();
 			if (previous != null) {
-				if (previous instanceof Canvas && videoOutput != null) {
-					((Canvas) previous).hideExternal();
-				}
 				previous.clearDisplayableView();
 			}
 			String title = displayable == null || displayable.getTitle() == null
 					? appName : displayable.getTitle();
 			if (displayable instanceof Canvas && videoOutput != null) {
 				Canvas canvas = (Canvas) displayable;
-				canvas.showExternal();
 				videoOutput.onVideoSizeChanged(canvas.getWidth(), canvas.getHeight());
 			} else if (displayable != null) {
 				emitLcdUi(displayable, true);
@@ -330,6 +519,14 @@ public final class J2meSession implements J2meHost, AutoCloseable {
 			}
 			activity.setTitle(title);
 			callbacks.onTitleChanged(title);
+		});
+		executeLifecycle(() -> {
+			if (isTerminal()) return;
+			try {
+				reconcileCanvas(lifecycleGate.acceptsOutput());
+			} catch (Exception error) {
+				if (!isTerminal()) mainHandler.post(() -> fail(error));
+			}
 		});
 	}
 
@@ -344,6 +541,43 @@ public final class J2meSession implements J2meHost, AutoCloseable {
 	}
 
 	@Override
+	public synchronized void onMidletPaused() {
+		if (!isTerminal()) requestLifecycle(false);
+	}
+
+	@Override
+	public synchronized boolean requestMidletResume() {
+		if (visible && !isTerminal()) requestLifecycle(true);
+		return true;
+	}
+
+	@Override
+	public synchronized boolean requestVibration(int durationMillis) {
+		if (durationMillis < 0) throw new IllegalStateException("Negative vibration duration");
+		// Always consume embedded requests, even when inactive or using the empty callback.
+		if (isTerminal()) return true;
+		if (durationMillis == 0) {
+			cancelVibration();
+			return true;
+		}
+		if (!visible || !lifecycleGate.acceptsOutput()) return true;
+		long revision = lifecycleGate.revision();
+		mainHandler.post(() -> {
+			if (lifecycleGate.isCurrent(revision) && visible && lifecycleGate.acceptsOutput()) {
+				callbacks.onVibrationRequested(durationMillis);
+			}
+		});
+		return true;
+	}
+
+	private void cancelVibration() {
+		mainHandler.post(() -> {
+			// finishSession sends a final cancellation before releasing this session.
+			if (!finished) callbacks.onVibrationRequested(0);
+		});
+	}
+
+	@Override
 	public void finishSession() {
 		mainHandler.post(() -> {
 			if (finished) {
@@ -351,16 +585,18 @@ public final class J2meSession implements J2meHost, AutoCloseable {
 			}
 			finished = true;
 			visible = false;
+			lifecycleGate.close();
+			callbacks.onVibrationRequested(0);
+			lifecycleWorker.shutdownNow();
+			worker.shutdownNow();
 			Displayable old = current;
 			current = null;
 			closeLcdUi();
 			if (old != null) {
-				if (old instanceof Canvas && videoOutput != null) {
-					((Canvas) old).hideExternal();
-				}
 				old.clearDisplayableView();
 			}
 			ContextHolder.detachHost(this);
+			MediaRuntimeAudio.closeHostPlayers();
 			setState(State.STOPPED);
 			callbacks.onSessionFinished();
 			J2meRuntime.release(this);
@@ -388,15 +624,18 @@ public final class J2meSession implements J2meHost, AutoCloseable {
 	}
 
 	@Override
-	public void close() {
+	public synchronized void close() {
 		if (closed) {
 			return;
 		}
 		closed = true;
+		visible = false;
+		lifecycleGate.close();
+		cancelVibration();
 		worker.shutdownNow();
-		if (state == State.RUNNING || state == State.PAUSED) {
+		if (midletReady && state != State.STOPPED) {
 			setState(State.STOPPING);
-			MidletThread.destroyApp();
+			stopMidlet();
 		} else {
 			finishSession();
 		}
@@ -436,15 +675,21 @@ public final class J2meSession implements J2meHost, AutoCloseable {
 	}
 
 	private void fail(Throwable error) {
-		if (closed) {
+		if (isTerminal()) {
 			return;
 		}
+		lifecycleGate.close();
+		visible = false;
+		cancelVibration();
+		MediaRuntimeAudio.setHostPaused(true);
 		setState(State.FAILED);
 		callbacks.onError(error);
 	}
 
 	private void setState(State newState) {
 		state = newState;
-		mainHandler.post(() -> callbacks.onStateChanged(newState));
+		mainHandler.post(() -> {
+			if (state == newState) callbacks.onStateChanged(newState);
+		});
 	}
 }

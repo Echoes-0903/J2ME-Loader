@@ -58,4 +58,9 @@ public class TonePlayer extends BasePlayer implements ToneControl {
 	public void doStart() {
 		midiDriver.write(midiSequence);
 	}
+
+	@Override
+	protected void doHostResume() {
+		// MIDI output is host-muted; do not replay a sequence that was already submitted.
+	}
 }

@@ -232,6 +232,10 @@ public class ContextHolder {
 	}
 
 	public static boolean vibrate(int duration) {
+		J2meHost host = getHost();
+		if (host != null && host.requestVibration(duration)) {
+			return true;
+		}
 		if (!vibrationEnabled) {
 			return false;
 		}

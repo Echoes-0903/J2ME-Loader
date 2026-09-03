@@ -20,6 +20,18 @@ public interface J2meHost {
 
 	boolean isVisible();
 
+	/** Optional embedded lifecycle bridge for MIDlet-initiated state changes. */
+	default void onMidletPaused() { }
+
+	/** Returns true when the host handles the resume request itself. */
+	default boolean requestMidletResume() { return false; }
+
+	/**
+	 * Returns true when the host owns vibration (including ignored requests), preventing
+	 * fallback to the Android vibrator. Duration is in milliseconds; zero cancels.
+	 */
+	default boolean requestVibration(int durationMillis) { return false; }
+
 	void finishSession();
 
 	void showExitConfirmation();

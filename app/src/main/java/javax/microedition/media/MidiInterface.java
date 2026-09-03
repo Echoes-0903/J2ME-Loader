@@ -20,12 +20,35 @@ import org.billthefarmer.mididriver.MidiDriver;
 
 public class MidiInterface {
 	private static MidiDriver driver;
+	private static boolean hostMuted;
+	private static boolean hostPaused;
 
 	public static synchronized MidiDriver getDriver() {
 		if (driver == null) {
 			driver = MidiDriver.getInstance();
 			driver.start();
+			driver.setVolume(hostMuted || hostPaused ? 0 : 100);
 		}
 		return driver;
+	}
+
+	static synchronized void setHostMuted(boolean muted) {
+		hostMuted = muted;
+		if (driver != null) {
+			driver.setVolume(hostMuted || hostPaused ? 0 : 100);
+		}
+	}
+
+	// The raw MIDI synthesizer has no playback cursor/pause API. Preserve its state silently.
+	static synchronized void setHostPaused(boolean paused) {
+		hostPaused = paused;
+		if (driver != null) driver.setVolume(hostMuted || hostPaused ? 0 : 100);
+	}
+
+	static synchronized void closeHostDriver() {
+		if (driver != null) {
+			driver.stop();
+			driver = null;
+		}
 	}
 }

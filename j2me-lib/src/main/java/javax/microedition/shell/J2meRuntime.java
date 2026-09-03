@@ -28,7 +28,7 @@ public final class J2meRuntime {
 
 	public static synchronized J2meSession createSession(Activity activity,
 			J2meSession.Callbacks callbacks) {
-		if (activeSession != null && !activeSession.isClosed()) {
+		if (activeSession != null) {
 			throw new IllegalStateException("Only one J2ME session may be active in a process");
 		}
 		activeSession = new J2meSession(activity, callbacks);

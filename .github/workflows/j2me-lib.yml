@@ -13,7 +13,7 @@ on:
       version:
         description: Maven package version
         required: true
-        default: 1.8.2-external-output.5
+        default: 1.8.2-external-output.7
 
 concurrency:
   group: j2me-lib-${{ github.ref }}
@@ -68,7 +68,7 @@ jobs:
           fi
           echo "version=${version}" >> "${GITHUB_OUTPUT}"
 
-      - name: Build release AAR and Maven repository
+      - name: Test and build release AAR and Maven repository
         shell: bash
         run: |
           chmod +x ./gradlew
@@ -76,6 +76,7 @@ jobs:
             -Pj2meEmbeddingBuild \
             -Pj2meNdkVersion="${J2ME_NDK_VERSION}" \
             -Pj2meVersion="${{ steps.version.outputs.version }}" \
+            :j2me-lib:testDebugUnitTest \
             :j2me-lib:assembleRelease \
             :j2me-lib:publishReleasePublicationToIntegrationRepository
 
