@@ -120,6 +120,30 @@ jobs:
             j2me-lib/build/outputs/aar/j2me-lib-release.aar
             j2me-lib/build/repo/**
 
+      - name: Publish GitHub release
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_VERSION: ${{ steps.version.outputs.version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME}"
+          base="j2me-lib/build/repo/ru/playsoftware/j2meloader/j2me-loader/${RELEASE_VERSION}/j2me-loader-${RELEASE_VERSION}"
+          assets=()
+          for suffix in .aar .module .pom -sources.jar; do
+            test -s "${base}${suffix}"
+            test -s "${base}${suffix}.sha256"
+            assets+=("${base}${suffix}" "${base}${suffix}.sha256")
+          done
+
+          # Canonical filenames and module metadata let hosts resolve dependencies directly.
+          # Never overwrite a published version; a duplicate release fails instead.
+          gh release create "${tag}" "${assets[@]}" \
+            --verify-tag \
+            --title "J2ME embedding library ${RELEASE_VERSION}" \
+            --generate-notes
+
       - name: Publish GitHub Packages Maven artifact
         if: github.ref_type == 'tag' || github.event_name == 'workflow_dispatch'
         env:
@@ -132,26 +156,3 @@ jobs:
             -Pj2meNdkVersion="${J2ME_NDK_VERSION}" \
             -Pj2meVersion="${{ steps.version.outputs.version }}" \
             :j2me-lib:publishReleasePublicationToGitHubPackagesRepository
-
-      - name: Publish GitHub release
-        if: github.ref_type == 'tag'
-        env:
-          GH_TOKEN: ${{ github.token }}
-          RELEASE_VERSION: ${{ steps.version.outputs.version }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          tag="${GITHUB_REF_NAME}"
-          aar="j2me-lib/build/outputs/aar/j2me-lib-release.aar"
-          pom="j2me-lib/build/repo/ru/playsoftware/j2meloader/j2me-loader/${RELEASE_VERSION}/j2me-loader-${RELEASE_VERSION}.pom"
-
-          if gh release view "${tag}" >/dev/null 2>&1; then
-            gh release upload "${tag}" "${aar}#j2me-loader-${RELEASE_VERSION}.aar" "${pom}" --clobber
-          else
-            gh release create "${tag}" \
-              "${aar}#j2me-loader-${RELEASE_VERSION}.aar" \
-              "${pom}" \
-              --verify-tag \
-              --title "J2ME embedding library ${RELEASE_VERSION}" \
-              --generate-notes
-          fi

@@ -76,19 +76,25 @@ does not implement previously stubbed vendor APIs or virtual-keyboard feedback.
 
 ## Consume a release
 
-Add GitHub Packages to `dependencyResolutionManagement.repositories`:
+Public GitHub Releases can be consumed directly, without Maven Local or GitHub
+Packages credentials. Add this to `dependencyResolutionManagement.repositories`:
 
 ```groovy
-maven {
-    url = uri('https://maven.pkg.github.com/echoes-0903/J2ME-Loader')
-    credentials {
-        username = providers.gradleProperty('gpr.user').orNull
-                ?: System.getenv('GITHUB_ACTOR')
-        password = providers.gradleProperty('gpr.key').orNull
-                ?: System.getenv('GITHUB_TOKEN')
+exclusiveContent {
+    forRepository {
+        ivy {
+            name = 'j2meGitHubReleases'
+            url = uri('https://github.com/Echoes-0903/J2ME-Loader/releases/download')
+            patternLayout {
+                artifact 'j2me-lib-v[revision]/[artifact]-[revision](-[classifier]).[ext]'
+            }
+            metadataSources {
+                gradleMetadata()
+            }
+        }
     }
-    content {
-        includeGroup 'ru.playsoftware.j2meloader'
+    filter {
+        includeModule 'ru.playsoftware.j2meloader', 'j2me-loader'
     }
 }
 ```
@@ -99,22 +105,25 @@ Then add the fixed release dependency:
 implementation 'ru.playsoftware.j2meloader:j2me-loader:1.8.2-external-output.7'
 ```
 
-Use a classic personal access token with `read:packages` in the user-level
-`~/.gradle/gradle.properties` file:
+This requires the published `.module` metadata, preserving transitive dependencies
+and variants; do not append `@aar` or use an artifact-only/flat-directory fallback.
+Release `1.8.2-external-output.7` was built locally from its tagged source and
+uploaded after validation, not built by GitHub Actions.
 
-```properties
-gpr.user=YOUR_GITHUB_USERNAME
-gpr.key=YOUR_CLASSIC_PAT
-```
-
-For private repositories, the token also needs `repo`. Never commit this file.
-
-Tags named `j2me-lib-v<version>` build the release AAR, publish it to GitHub
-Packages, and attach the AAR and POM to a GitHub Release. The workflow can also
-be run manually with an explicit Maven version.
+Tags named `j2me-lib-v<version>` publish canonical `j2me-loader-<version>` AAR,
+module metadata, POM, sources JAR and SHA-256 files to GitHub Releases before
+attempting a GitHub Packages mirror. Published versions must not be overwritten.
+Workflow dispatch with an explicit version remains available for Maven publishing.
 
 ## Build locally
 
 ```text
 gradlew.bat -Pj2meEmbeddingBuild -Pj2meNdkVersion=27.1.12297006 :j2me-lib:assembleRelease
 ```
+
+For a manual release, also pass `-Pj2meVersion=<new-version>` and run
+`:j2me-lib:testDebugUnitTest :j2me-lib:publishReleasePublicationToIntegrationRepository`.
+Upload the four artifacts and their `.sha256` files from
+`j2me-lib/build/repo/ru/playsoftware/j2meloader/j2me-loader/<new-version>/` to the
+matching verified release tag. Preserve the actual filenames (not just asset
+labels), record source provenance, and disclose when a build was produced locally.
