@@ -32,6 +32,12 @@ public final class NativeLibrary implements AutoCloseable {
 		return this;
 	}
 
+	/** Enables the optional completed-Canvas frame callback for frame-driven host input. */
+	public NativeLibrary setFrameCallbackEnable(boolean enabled) {
+		session.setFrameCallbackEnable(enabled);
+		return this;
+	}
+
 	/** Enables or mutes audio output for the active embedded session. */
 	public NativeLibrary setAudioEnabled(boolean enabled) {
 		session.setAudioEnabled(enabled);

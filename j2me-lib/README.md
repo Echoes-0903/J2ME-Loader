@@ -12,6 +12,7 @@ Create the facade with only the host activity and callbacks, set an
 NativeLibrary runtime = new NativeLibrary(activity, callbacks);
 runtime.setExternalOutput(videoOutput);
 runtime.setAudioEnabled(true);
+runtime.setFrameCallbackEnable(true);
 runtime.startGame(midletJarPath, conversionDirectoryPath);
 ```
 
@@ -22,6 +23,15 @@ immutable semantic `LcdUiState` snapshots through
 another UI toolkit and returns interactions through
 `NativeLibrary.dispatchUiAction(LcdUiAction)`. The embedding API never creates or
 returns an Android `View` or `Dialog`.
+
+`setFrameCallbackEnable(true)` opts into
+`Callbacks.onFrameCallback(long sequence)`. The callback runs synchronously after
+one visible Canvas bitmap is complete and before that bitmap is forwarded to the
+external video output, so hosts can publish input for the next emulated frame.
+The sequence is one-based per session and remains monotonic across disable/enable.
+Paused, stopped, failed, closed, and hidden sessions do not emit callbacks. The
+callback runs while the Canvas buffer is locked: keep it bounded, do not perform UI
+or lifecycle work, and never wait for the Android main thread.
 
 ```java
 callbacks.onLcdUiStateChanged(state);
@@ -102,13 +112,15 @@ exclusiveContent {
 Then add the fixed release dependency:
 
 ```groovy
-implementation 'ru.playsoftware.j2meloader:j2me-loader:1.8.2-external-output.7'
+implementation 'ru.playsoftware.j2meloader:j2me-loader:1.8.2-external-output.8'
 ```
 
 This requires the published `.module` metadata, preserving transitive dependencies
 and variants; do not append `@aar` or use an artifact-only/flat-directory fallback.
 Release `1.8.2-external-output.7` was built locally from its tagged source and
 uploaded after validation, not built by GitHub Actions.
+The frame-callback API starts with `1.8.2-external-output.8`. During pre-release
+validation, hosts can resolve the locally published Maven artifact first.
 
 Tags named `j2me-lib-v<version>` publish canonical `j2me-loader-<version>` AAR,
 module metadata, POM, sources JAR and SHA-256 files to GitHub Releases before

@@ -21,6 +21,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicLong;
 
 import javax.microedition.lcdui.Alert;
 import javax.microedition.lcdui.Canvas;
@@ -80,6 +81,14 @@ public final class J2meSession implements J2meHost, AutoCloseable {
 
 		default void onSessionFinished() {
 		}
+
+		/**
+		 * Runs synchronously after one visible Canvas bitmap is complete and before it is forwarded to
+		 * the external video output. Implementations may update input for the next frame, but must not
+		 * wait for the Android main thread or perform lifecycle work.
+		 */
+		default void onFrameCallback(long sequence) {
+		}
 	}
 
 	private final Activity activity;
@@ -93,6 +102,8 @@ public final class J2meSession implements J2meHost, AutoCloseable {
 	private final ExecutorService lifecycleWorker = Executors.newSingleThreadExecutor(r ->
 			new Thread(r, "J2meLifecycle"));
 	private final SessionLifecycleGate lifecycleGate = new SessionLifecycleGate();
+	private final AtomicLong frameCallbackSequence = new AtomicLong();
+	private volatile boolean frameCallbackEnabled;
 	private volatile boolean midletReady;
 	// Only the serial lifecycle worker changes the externally shown Canvas.
 	private Canvas shownCanvas;
@@ -103,7 +114,16 @@ public final class J2meSession implements J2meHost, AutoCloseable {
 		@Override public void onFrame(Bitmap bitmap) {
 			ExternalVideoOutput output = videoOutput;
 			// Never wait here: Canvas calls this while holding its buffer lock.
-			if (output != null && visible && lifecycleGate.acceptsOutput()) output.onFrame(bitmap);
+			if (!visible || !lifecycleGate.acceptsOutput()) return;
+			if (frameCallbackEnabled) {
+				try {
+					callbacks.onFrameCallback(frameCallbackSequence.incrementAndGet());
+				} catch (Throwable error) {
+					frameCallbackEnabled = false;
+					mainHandler.post(() -> callbacks.onError(error));
+				}
+			}
+			if (output != null) output.onFrame(bitmap);
 		}
 		@Override public void onVideoSizeChanged(int width, int height) {
 			ExternalVideoOutput output = videoOutput;
@@ -150,6 +170,11 @@ public final class J2meSession implements J2meHost, AutoCloseable {
 		}
 	}
 
+	/** Enables the optional completed-Canvas frame callback. Disabled by default. */
+	public void setFrameCallbackEnable(boolean enabled) {
+		frameCallbackEnabled = enabled;
+	}
+
 	/** Enables or mutes all media players owned by the embedded MIDlet process. */
 	public void setAudioEnabled(boolean enabled) {
 		MediaRuntimeAudio.setHostMuted(!enabled);
@@ -170,6 +195,7 @@ public final class J2meSession implements J2meHost, AutoCloseable {
 			throw new IllegalStateException(
 					"ExternalVideoOutput must be set before starting an embedded session");
 		}
+		frameCallbackSequence.set(0L);
 
 		Application application = activity.getApplication();
 		ContextHolder.setApplication(application);
