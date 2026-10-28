@@ -123,7 +123,7 @@ public abstract class Canvas extends Displayable {
 	private static final float FULLSCREEN_HEIGHT_RATIO = 0.85f;
 
 	private static boolean filter;
-	private static boolean touchInput;
+	private static volatile boolean touchInput;
 	private static int graphicsMode;
 	private static ShaderInfo shaderFilter;
 	private static boolean parallelRedraw;

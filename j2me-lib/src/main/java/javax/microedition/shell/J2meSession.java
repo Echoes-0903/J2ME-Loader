@@ -27,6 +27,8 @@ import javax.microedition.lcdui.Alert;
 import javax.microedition.lcdui.Canvas;
 import javax.microedition.lcdui.Displayable;
 import javax.microedition.lcdui.Display;
+import javax.microedition.lcdui.event.CanvasEvent;
+import javax.microedition.lcdui.event.Event;
 import javax.microedition.lcdui.event.RunnableEvent;
 import javax.microedition.lcdui.keyboard.KeyMapper;
 import javax.microedition.media.MediaRuntimeAudio;
@@ -110,6 +112,10 @@ public final class J2meSession implements J2meHost, AutoCloseable {
 	// These maps are accessed only inside MIDP events (also serialized in ImmediateMode).
 	private final Map<Integer, Canvas> pressedKeys = new LinkedHashMap<>();
 	private final Map<Integer, PointerPress> pressedPointers = new LinkedHashMap<>();
+	private final AtomicLong touchInputRevision = new AtomicLong();
+	// Applied on the MIDP queue, independently of the paused/running lifecycle state.
+	private long appliedTouchInputRevision;
+	private boolean touchInputEnabled = true;
 	private final ExternalVideoOutput gatedVideoOutput = new ExternalVideoOutput() {
 		@Override public void onFrame(Bitmap bitmap) {
 			ExternalVideoOutput output = videoOutput;
@@ -180,6 +186,24 @@ public final class J2meSession implements J2meHost, AutoCloseable {
 		MediaRuntimeAudio.setHostMuted(!enabled);
 	}
 
+	/**
+	 * Queues a touch capability change for a loaded session, including while paused.
+	 * Invalidates queued pointer input immediately; completion runs on the MIDP queue.
+	 */
+	public boolean setTouchInputEnabled(boolean enabled) {
+		if (!midletReady || isTerminal()) return false;
+		long revision = touchInputRevision.incrementAndGet();
+		// Posting directly can run game callbacks on the caller in ImmediateMode.
+		executeLifecycle(() -> Display.postEvent(RunnableEvent.getInstance(() -> {
+			if (isTerminal() || revision != touchInputRevision.get()) return;
+			releasePointers();
+			touchInputEnabled = enabled;
+			Canvas.setHasTouchInput(enabled);
+			appliedTouchInputRevision = revision;
+		})));
+		return true;
+	}
+
 	public synchronized void start(File midletJar, File conversionDirectory, J2meConfig config) {
 		if (closed) {
 			throw new IllegalStateException("Session is closed");
@@ -226,6 +250,7 @@ public final class J2meSession implements J2meHost, AutoCloseable {
 				throw new IllegalStateException("MIDlet configuration was not created");
 			}
 			loader.applyConfiguration();
+			touchInputEnabled = prepared.profile.touchInput;
 			LinkedHashMap<String, String> midlets = loader.loadMIDletList();
 			if (midlets.isEmpty()) {
 				throw new IllegalArgumentException("No MIDlet entry found in manifest");
@@ -419,31 +444,64 @@ public final class J2meSession implements J2meHost, AutoCloseable {
 	}
 
 	public void pointerDown(int pointer, int x, int y) {
+		long revision = touchInputRevision.get();
 		postInput(() -> {
+			if (!acceptsPointerInput(revision)) return;
 			Canvas canvas = currentCanvas();
 			if (canvas != null && !pressedPointers.containsKey(pointer)) {
-				pressedPointers.put(pointer, new PointerPress(canvas, x, y));
-				canvas.postPointerPressed(pointer, x, y);
+				pressedPointers.put(pointer, new PointerPress(canvas, x, y, revision));
+				dispatchPointerEvent(canvas, CanvasEvent.POINTER_PRESSED, pointer, x, y);
 			}
 		});
 	}
 
 	public void pointerMove(int pointer, int x, int y) {
+		long revision = touchInputRevision.get();
 		postInput(() -> {
+			if (!acceptsPointerInput(revision)) return;
 			PointerPress press = pressedPointers.get(pointer);
-			if (press != null) {
+			if (press != null && press.revision == revision) {
 				press.x = x;
 				press.y = y;
-				press.canvas.postPointerDragged(pointer, x, y);
+				dispatchPointerEvent(press.canvas, CanvasEvent.POINTER_DRAGGED, pointer, x, y);
 			}
 		});
 	}
 
 	public void pointerUp(int pointer, int x, int y) {
+		long revision = touchInputRevision.get();
 		Display.postEvent(RunnableEvent.getInstance(() -> {
-			PointerPress press = pressedPointers.remove(pointer);
-			if (press != null) press.canvas.postPointerReleased(pointer, x, y);
+			PointerPress press = pressedPointers.get(pointer);
+			if (press != null && press.revision == revision) {
+				pressedPointers.remove(pointer);
+				dispatchPointerEvent(press.canvas, CanvasEvent.POINTER_RELEASED, pointer, x, y);
+			}
 		}));
+	}
+
+	private boolean acceptsPointerInput(long revision) {
+		return touchInputEnabled && revision == touchInputRevision.get()
+				&& revision == appliedTouchInputRevision;
+	}
+
+	private static void dispatchPointerEvent(Canvas canvas, int type, int pointer, int x, int y) {
+		// Already inside a MIDP event. Re-queuing would let a callback outlive its input revision.
+		Event event = CanvasEvent.getInstance(canvas, type, pointer, x, y);
+		try {
+			event.process();
+		} finally {
+			event.recycle();
+		}
+	}
+
+	private void releasePointers() {
+		Map<Integer, PointerPress> released = new LinkedHashMap<>(pressedPointers);
+		pressedPointers.clear();
+		for (Map.Entry<Integer, PointerPress> pointer : released.entrySet()) {
+			PointerPress press = pointer.getValue();
+			dispatchPointerEvent(press.canvas, CanvasEvent.POINTER_RELEASED,
+					pointer.getKey(), press.x, press.y);
+		}
 	}
 
 	private void postInput(Runnable input) {
@@ -463,11 +521,7 @@ public final class J2meSession implements J2meHost, AutoCloseable {
 				key.getValue().postKeyReleased(key.getKey());
 			}
 			pressedKeys.clear();
-			for (Map.Entry<Integer, PointerPress> pointer : pressedPointers.entrySet()) {
-				PointerPress press = pointer.getValue();
-				press.canvas.postPointerReleased(pointer.getKey(), press.x, press.y);
-			}
-			pressedPointers.clear();
+			releasePointers();
 			Display.postEvent(RunnableEvent.getInstance(completed::countDown));
 		}));
 		awaitCallback(completed);
@@ -475,9 +529,11 @@ public final class J2meSession implements J2meHost, AutoCloseable {
 
 	private static final class PointerPress {
 		final Canvas canvas;
+		final long revision;
 		int x, y;
-		PointerPress(Canvas canvas, int x, int y) {
+		PointerPress(Canvas canvas, int x, int y, long revision) {
 			this.canvas = canvas;
+			this.revision = revision;
 			this.x = x;
 			this.y = y;
 		}

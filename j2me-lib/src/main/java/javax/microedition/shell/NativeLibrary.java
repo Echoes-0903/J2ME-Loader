@@ -44,6 +44,11 @@ public final class NativeLibrary implements AutoCloseable {
 		return this;
 	}
 
+	/** Updates Canvas touch capability and input while running or paused. */
+	public boolean setTouchInputEnabled(boolean enabled) {
+		return session.setTouchInputEnabled(enabled);
+	}
+
 	public NativeLibrary overrideConfig(J2meConfig config) {
 		if (config == null) {
 			throw new NullPointerException("J2ME configuration is required");
