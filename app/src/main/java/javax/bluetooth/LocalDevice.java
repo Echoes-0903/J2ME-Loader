@@ -52,6 +52,7 @@ public class LocalDevice implements ActivityResultListener {
 
 	private LocalDevice() throws BluetoothStateException {
 		agent = new DiscoveryAgent();
+		if (VirtualBluetooth.current() != null) return;
 		ContextHolder.addActivityResultListener(this);
 		boolean permissionsGranted;
 		if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
@@ -89,11 +90,14 @@ public class LocalDevice implements ActivityResultListener {
 		return dev;
 	}
 
+	static void resetLocalDevice() { dev = null; }
+
 	public DiscoveryAgent getDiscoveryAgent() {
 		return agent;
 	}
 
 	public String getFriendlyName() {
+		if (VirtualBluetooth.current() != null) return VirtualBluetooth.current().name();
 		return DiscoveryAgent.adapter.getName();
 	}
 
@@ -105,6 +109,10 @@ public class LocalDevice implements ActivityResultListener {
 		if ((mode != DiscoveryAgent.GIAC) && (mode != DiscoveryAgent.LIAC) && (mode != DiscoveryAgent.NOT_DISCOVERABLE)
 				&& (mode < 0x9E8B00 || mode > 0x9E8B3F)) {
 			throw new IllegalArgumentException("Invalid discoverable mode");
+		}
+		if (VirtualBluetooth.current() != null) {
+			try { return VirtualBluetooth.current().setDiscoverable(mode); }
+			catch (java.io.IOException e) { throw new BluetoothStateException(e.toString()); }
 		}
 
 		if (lock || mode == DiscoveryAgent.NOT_DISCOVERABLE)
@@ -133,10 +141,12 @@ public class LocalDevice implements ActivityResultListener {
 	}
 
 	public static boolean isPowerOn() {
+		if (VirtualBluetooth.current() != null) return true;
 		return BluetoothAdapter.getDefaultAdapter().isEnabled();
 	}
 
 	public int getDiscoverable() {
+		if (VirtualBluetooth.current() != null) return VirtualBluetooth.current().discoverable();
 		int scanMode = DiscoveryAgent.adapter.getScanMode();
 		switch (scanMode) {
 			case BluetoothAdapter.SCAN_MODE_CONNECTABLE:
@@ -158,10 +168,12 @@ public class LocalDevice implements ActivityResultListener {
 	}
 
 	public String getBluetoothAddress() {
+		if (VirtualBluetooth.current() != null) return VirtualBluetooth.current().address();
 		return androidToJavaAddress(DiscoveryAgent.adapter.getAddress());
 	}
 
 	public ServiceRecord getRecord(Connection notifier) {
+		if (notifier instanceof VirtualNotifier) return ((VirtualNotifier) notifier).record;
 		if (notifier == null) {
 			throw new NullPointerException("notifier is null");
 		}
@@ -187,6 +199,14 @@ public class LocalDevice implements ActivityResultListener {
 
 	// Not supported on Android due to API limitations
 	public void updateRecord(ServiceRecord srvRecord) throws ServiceRegistrationException {
+		if (srvRecord instanceof VirtualServiceRecord) {
+			VirtualServiceRecord record = (VirtualServiceRecord) srvRecord;
+			if (record.device != null || record.network != VirtualBluetooth.current())
+				throw new IllegalArgumentException("Not a local virtual service");
+			try { record.network.update(record); }
+			catch (java.io.IOException e) { throw new ServiceRegistrationException(e.toString()); }
+			return;
+		}
 		if (srvRecord == null) {
 			throw new NullPointerException("Service Record is null");
 		}

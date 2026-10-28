@@ -165,14 +165,28 @@ public class DiscoveryAgent {
 
 	private LinkedList<Transaction> transList = new LinkedList<>();
 	private HashSet<BluetoothDevice> discoveredList = new HashSet<>();
+	private static final class VirtualInquiry {
+		final DiscoveryListener listener;
+		final java.util.concurrent.ConcurrentHashMap<String, RemoteDevice> devices = new java.util.concurrent.ConcurrentHashMap<>();
+		VirtualInquiry(DiscoveryListener listener) { this.listener = listener; }
+	}
+	private final java.util.concurrent.atomic.AtomicReference<VirtualInquiry> virtualInquiry = new java.util.concurrent.atomic.AtomicReference<>();
+	private volatile java.util.concurrent.ConcurrentHashMap<String, RemoteDevice> virtualDevices = new java.util.concurrent.ConcurrentHashMap<>();
+	private final java.util.concurrent.ConcurrentHashMap<Integer, DiscoveryListener> virtualSearches = new java.util.concurrent.ConcurrentHashMap<>();
+	private static final java.util.concurrent.atomic.AtomicInteger virtualId = new java.util.concurrent.atomic.AtomicInteger();
 
 	DiscoveryAgent() throws BluetoothStateException {
+		if (VirtualBluetooth.current() != null) return;
 		adapter = BluetoothAdapter.getDefaultAdapter();
 		if (adapter == null)
 			throw new BluetoothStateException();
 	}
 
 	public RemoteDevice[] retrieveDevices(int option) {
+		if (VirtualBluetooth.current() != null) {
+			if (option != CACHED && option != PREKNOWN) throw new IllegalArgumentException();
+			return virtualDevices.values().toArray(new RemoteDevice[0]);
+		}
 		Set<BluetoothDevice> set;
 		if (option == CACHED) {
 			set = discoveredList;
@@ -193,6 +207,29 @@ public class DiscoveryAgent {
 		}
 		if ((accessCode != LIAC) && (accessCode != GIAC) && ((accessCode < 0x9E8B00) || (accessCode > 0x9E8B3F))) {
 			throw new IllegalArgumentException("Invalid accessCode " + accessCode);
+		}
+		VirtualBluetooth virtual = VirtualBluetooth.current();
+		if (virtual != null) {
+			VirtualInquiry inquiry = new VirtualInquiry(listener);
+			synchronized (virtualInquiry) {
+				if (!virtualInquiry.compareAndSet(null, inquiry)) return false;
+				virtualDevices = inquiry.devices;
+			}
+			new Thread(() -> {
+				int result = DiscoveryListener.INQUIRY_COMPLETED;
+				try {
+					for (int round = 0; round < 3 && virtualInquiry.get() == inquiry; round++) {
+						for (RemoteDevice remote : virtual.devices()) {
+								if (virtualInquiry.get() != inquiry) break;
+								if (inquiry.devices.putIfAbsent(remote.getBluetoothAddress(), remote) == null)
+								listener.deviceDiscovered(remote, new DeviceClass());
+						}
+						Thread.sleep(500);
+					}
+				} catch (IOException | InterruptedException e) { result = DiscoveryListener.INQUIRY_ERROR; }
+				if (virtualInquiry.compareAndSet(inquiry, null)) listener.inquiryCompleted(result);
+			}, "j2me-bt-inquiry").start();
+			return true;
 		}
 
 		if (adapter.isDiscovering())
@@ -250,6 +287,14 @@ public class DiscoveryAgent {
 	}
 
 	public boolean cancelInquiry(DiscoveryListener listener) {
+		if (listener == null) throw new NullPointerException("DiscoveryListener is null");
+		if (VirtualBluetooth.current() != null) {
+			synchronized (virtualInquiry) {
+				VirtualInquiry inquiry = virtualInquiry.get();
+				if (inquiry == null || inquiry.listener != listener || !virtualInquiry.compareAndSet(inquiry, null)) return false;
+			}
+			listener.inquiryCompleted(DiscoveryListener.INQUIRY_TERMINATED); return true;
+		}
 		if (listener == null) {
 			throw new NullPointerException("DiscoveryListener is null");
 		}
@@ -287,6 +332,22 @@ public class DiscoveryAgent {
 		}
 
 		final Transaction curTrans = new Transaction(maxID, attrSet, uuidSet, btDev, listener);
+		VirtualBluetooth virtual = VirtualBluetooth.current();
+		if (virtual != null) {
+			int id = virtualId.incrementAndGet(); virtualSearches.put(id, listener);
+			new Thread(() -> {
+				java.util.List<ServiceRecord> records = java.util.Collections.emptyList();
+				int result;
+				try { records = virtual.services(btDev, uuidSet); result = records.isEmpty() ?
+						DiscoveryListener.SERVICE_SEARCH_NO_RECORDS : DiscoveryListener.SERVICE_SEARCH_COMPLETED; }
+				catch (IOException e) { result = DiscoveryListener.SERVICE_SEARCH_ERROR; }
+				if (virtualSearches.remove(id, listener)) {
+					if (!records.isEmpty()) listener.servicesDiscovered(id, records.toArray(new ServiceRecord[0]));
+					listener.serviceSearchCompleted(id, result);
+				}
+			}, "j2me-bt-services").start();
+			return id;
+		}
 		transList.add(curTrans);
 		ContextHolder.getAppContext().registerReceiver(curTrans, new IntentFilter(BluetoothDevice.ACTION_UUID));
 
@@ -304,6 +365,11 @@ public class DiscoveryAgent {
 	}
 
 	public boolean cancelServiceSearch(int transID) {
+		if (VirtualBluetooth.current() != null) {
+			DiscoveryListener listener = virtualSearches.remove(transID);
+			if (listener == null) return false;
+			listener.serviceSearchCompleted(transID, DiscoveryListener.SERVICE_SEARCH_TERMINATED); return true;
+		}
 		synchronized (transList) {
 			ListIterator<Transaction> iter = transList.listIterator();
 			while (iter.hasNext()) {
@@ -319,6 +385,15 @@ public class DiscoveryAgent {
 
 	// TODO
 	public String selectService(UUID uuid, int security, boolean master) throws BluetoothStateException {
+		VirtualBluetooth virtual = VirtualBluetooth.current();
+		if (virtual != null) {
+			try {
+				for (RemoteDevice remote : virtual.devices()) {
+					java.util.List<ServiceRecord> services = virtual.services(remote, new UUID[]{uuid});
+					if (!services.isEmpty()) return services.get(0).getConnectionURL(security, master);
+				}
+			} catch (IOException e) { throw new BluetoothStateException(e.toString()); }
+		}
 		return null;
 	}
 

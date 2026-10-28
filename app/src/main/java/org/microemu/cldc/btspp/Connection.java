@@ -38,6 +38,8 @@ public class Connection implements ConnectionImplementation, StreamConnectionNot
 	private boolean skipAfterWrite = false;
 
 	public javax.microedition.io.Connection openConnection(String name, int mode, boolean timeouts) throws IOException {
+		if (javax.bluetooth.VirtualBluetooth.current() != null)
+			return javax.bluetooth.VirtualBluetooth.current().open(name);
 		if (name == null)
 			throw new IllegalArgumentException("URL is null");
 		System.out.println("***** Connection URL: " + name);

@@ -19,6 +19,12 @@ public final class NativeLibrary implements AutoCloseable {
 	private final J2meSession session;
 	private J2meConfig config = new J2meConfig();
 
+	/** Installs a host-owned, session-scoped virtual Bluetooth room before starting the MIDlet. */
+	public NativeLibrary setVirtualBluetooth(javax.bluetooth.VirtualBluetooth value) {
+		session.setVirtualBluetooth(value);
+		return this;
+	}
+
 	public static void initialize(Application application) {
 		J2meRuntime.initialize(application);
 	}
@@ -44,17 +50,17 @@ public final class NativeLibrary implements AutoCloseable {
 		return this;
 	}
 
-	/** Updates Canvas touch capability and input while running or paused. */
-	public boolean setTouchInputEnabled(boolean enabled) {
-		return session.setTouchInputEnabled(enabled);
-	}
-
 	public NativeLibrary overrideConfig(J2meConfig config) {
 		if (config == null) {
 			throw new NullPointerException("J2ME configuration is required");
 		}
 		this.config = config;
 		return this;
+	}
+
+	/** Updates Canvas touch capability and input while running or paused. */
+	public boolean setTouchInputEnabled(boolean enabled) {
+		return session.setTouchInputEnabled(enabled);
 	}
 
 	/** Sets one value on the current per-session configuration. */

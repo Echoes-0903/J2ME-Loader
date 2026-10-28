@@ -138,6 +138,14 @@ public final class J2meSession implements J2meHost, AutoCloseable {
 	};
 
 	private volatile State state = State.IDLE;
+	private javax.bluetooth.VirtualBluetooth bluetooth;
+
+	public synchronized void setVirtualBluetooth(javax.bluetooth.VirtualBluetooth value) {
+		if (state != State.IDLE || closed || bluetooth != null)
+			throw new IllegalStateException("Virtual Bluetooth must be configured before starting the MIDlet");
+		bluetooth = java.util.Objects.requireNonNull(value, "bluetooth");
+		javax.bluetooth.VirtualBluetooth.install(value);
+	}
 	private volatile boolean visible;
 	private volatile boolean closed;
 	private volatile boolean finished;
@@ -678,6 +686,11 @@ public final class J2meSession implements J2meHost, AutoCloseable {
 				old.clearDisplayableView();
 			}
 			ContextHolder.detachHost(this);
+			if (bluetooth != null) {
+				bluetooth.close();
+				if (javax.bluetooth.VirtualBluetooth.current() == bluetooth) javax.bluetooth.VirtualBluetooth.install(null);
+				bluetooth = null;
+			}
 			MediaRuntimeAudio.closeHostPlayers();
 			setState(State.STOPPED);
 			callbacks.onSessionFinished();

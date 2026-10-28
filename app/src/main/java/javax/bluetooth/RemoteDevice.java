@@ -24,6 +24,13 @@ import javax.microedition.io.Connection;
 
 public class RemoteDevice {
 	BluetoothDevice dev;
+	private String virtualAddress;
+	private String virtualName;
+
+	RemoteDevice(String address, String name) {
+		virtualAddress = address.toUpperCase(java.util.Locale.ROOT);
+		virtualName = name;
+	}
 
 	RemoteDevice(BluetoothDevice dev) {
 		this.dev = dev;
@@ -40,11 +47,18 @@ public class RemoteDevice {
 		if (address == null) {
 			throw new NullPointerException("address is null");
 		}
+		if (VirtualBluetooth.current() != null) {
+			if (!address.matches("[0-9a-fA-F]{12}")) throw new IllegalArgumentException("Invalid Bluetooth address");
+			virtualAddress = address.toUpperCase(java.util.Locale.ROOT);
+			virtualName = address;
+			return;
+		}
 
 		dev = DiscoveryAgent.adapter.getRemoteDevice(javaToAndroidAddress(address));
 	}
 
 	public String getFriendlyName(boolean alwaysAsk) throws IOException {
+		if (virtualAddress != null) return virtualName;
 		String name = dev.getName();
 		if (name == null) {
 			name =  "";
@@ -53,20 +67,25 @@ public class RemoteDevice {
 	}
 
 	public final String getBluetoothAddress() {
+		if (virtualAddress != null) return virtualAddress;
 		return dev.getAddress().replace(":", "");
 	}
 
 	public boolean equals(Object obj) {
+		if (virtualAddress != null) return obj instanceof RemoteDevice &&
+				virtualAddress.equals(((RemoteDevice) obj).virtualAddress);
 		if (obj == null || !(obj instanceof RemoteDevice))
 			return false;
 		return dev.equals(((RemoteDevice) obj).dev);
 	}
 
 	public int hashCode() {
+		if (virtualAddress != null) return virtualAddress.hashCode();
 		return dev.hashCode();
 	}
 
 	public static RemoteDevice getRemoteDevice(Connection conn) throws IOException {
+		if (conn instanceof VirtualConnection) return new RemoteDevice(((VirtualConnection) conn).address);
 		if (conn == null)
 			throw new NullPointerException("conn is null");
 		if (!(conn instanceof org.microemu.cldc.btspp.SPPConnectionImpl
@@ -89,22 +108,28 @@ public class RemoteDevice {
 	}
 
 	public boolean authenticate() throws IOException {
+		if (virtualAddress != null) return VirtualBluetooth.current() != null;
 		return false;
 	}
 
 	public boolean authorize(javax.microedition.io.Connection conn) throws IOException {
+		if (virtualAddress != null) return conn instanceof VirtualConnection &&
+				virtualAddress.equals(((VirtualConnection) conn).address);
 		return false;
 	}
 
 	public boolean encrypt(javax.microedition.io.Connection conn, boolean on) throws IOException {
+		if (virtualAddress != null) return !on;
 		return false;
 	}
 
 	public boolean isAuthenticated() {
+		if (virtualAddress != null) return VirtualBluetooth.current() != null;
 		return false;
 	}
 
 	public boolean isAuthorized(javax.microedition.io.Connection conn) throws IOException {
+		if (virtualAddress != null) return authorize(conn);
 		return false;
 	}
 
@@ -113,6 +138,7 @@ public class RemoteDevice {
 	}
 
 	public boolean isTrustedDevice() {
+		if (virtualAddress != null) return VirtualBluetooth.current() != null;
 		return false;
 	}
 }
